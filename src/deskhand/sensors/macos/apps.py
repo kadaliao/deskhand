@@ -7,10 +7,15 @@ it in one place is better than hoping the caller remembers.
 
 from __future__ import annotations
 
+import os
+import subprocess
 from typing import Any
 
 from ...errors import CannotDo
 from .ax import appkit
+
+ANCESTORS = 12
+"""How far up the process tree to look for the responsible application."""
 
 REGULAR = 0
 """``NSApplicationActivationPolicyRegular``: has a Dock icon and a real window."""
@@ -53,6 +58,66 @@ def frontmost() -> tuple[str, int] | None:
     if app is None:
         return None
     return (str(app.localizedName() or "?"), int(app.processIdentifier()))
+
+
+def _parent_of(pid: int) -> int:
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "ppid=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return 0
+    text = result.stdout.strip()
+    return int(text) if text.isdigit() else 0
+
+
+def responsible_app() -> tuple[str, int] | None:
+    """The application macOS will attribute permissions to.
+
+    TCC does not grant Accessibility or Screen Recording to ``python``, ``uv`` or
+    ``deskhand``. It grants them to the application *responsible* for the process,
+    which is the terminal or multiplexer the command was launched from. Walking up
+    the parent chain until a pid matches a running application is the only
+    reliable way to see which one that is, and getting it wrong is the usual
+    reason a permission "is granted" and still does not work.
+    """
+    gui = {int(app.processIdentifier()): _name(app) for app in _all_apps()}
+    pid = os.getpid()
+    for _ in range(ANCESTORS):
+        if pid in gui:
+            return (gui[pid], pid)
+        pid = _parent_of(pid)
+        if pid <= 1:
+            break
+    return None
+
+
+def ancestors() -> list[tuple[int, str]]:
+    """The process chain, for when no ancestor is an application at all."""
+    chain: list[tuple[int, str]] = []
+    pid = os.getpid()
+    for _ in range(ANCESTORS):
+        try:
+            comm = subprocess.run(
+                ["ps", "-o", "comm=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            ).stdout.strip()
+        except Exception:
+            break
+        if not comm:
+            break
+        chain.append((pid, comm))
+        pid = _parent_of(pid)
+        if pid <= 1:
+            break
+    return chain
 
 
 def activate(name: str) -> str:

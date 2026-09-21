@@ -68,7 +68,12 @@ changed is what it has to prove:
 Needs from the user:
 1. **Accessibility** — already granted on this machine.
 2. **Screen Recording** — now required for M1, because of the finding above.
-   System Settings → Privacy & Security → Screen Recording.
+   Find out which application it belongs to rather than guessing:
+   `uv run deskhand permit` reports the responsible application, fires the system
+   dialogs that name it, and prints the System Settings path. On this machine the
+   chain is `python <- uv <- bash <- pi <- fish <- herdr`, and `herdr` runs
+   detached from its terminal, so nothing in the chain is the terminal you typed
+   in — which is exactly why guessing goes wrong.
 3. The target application frontmost, or `--focus <name>`.
 
 Before running anything, rehearse it. This is what caught the localisation

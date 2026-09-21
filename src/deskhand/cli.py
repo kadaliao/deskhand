@@ -45,6 +45,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     doctor = sub.add_parser("doctor", help="permissions, coverage and timing for the frontmost app")
     doctor.add_argument("--json", action="store_true")
 
+    permit = sub.add_parser(
+        "permit", help="ask macOS for the missing permissions and name the app to toggle"
+    )
+    permit.add_argument("--json", action="store_true")
+
     run = sub.add_parser("run", help="run a task file against the real desktop")
     run.add_argument("--task", required=True, help="JSON task, optionally with a steps script")
     run.add_argument("--json", action="store_true")
@@ -71,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ax": _ax,
         "probe": _probe,
         "doctor": _doctor,
+        "permit": _permit,
         "run": _run,
     }
     try:
@@ -78,6 +84,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (DeskhandError, OSError, ValueError, KeyError) as exc:
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         return ENVIRONMENT
+
+
+def _permit(args: argparse.Namespace) -> int:
+    """Trigger macOS's own dialogs, which name the application to authorize."""
+    from .sensors.macos import blame, request, status, to_do
+
+    current = status()
+    owner = blame()
+    outstanding = [name for name, granted in current.items() if not granted]
+    for name in outstanding:
+        # Shows the system dialog. A decision does not happen inside this call.
+        request(name)
+    report = {
+        "granted": current,
+        "requested": outstanding,
+        "attributed_to": owner,
+        "instructions": to_do(current, owner),
+        "recheck": status(),
+    }
+    if args.json:
+        print(json_io.dump(report))
+    else:
+        for line in report["instructions"]:
+            print(line)
+        if outstanding:
+            print(f"\nasked macOS for: {', '.join(outstanding)}")
+            print("if a dialog appeared, the name on it is the app to toggle")
+    return OK if not outstanding else ENVIRONMENT
 
 
 def _output_flags(parser: argparse.ArgumentParser) -> None:

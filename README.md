@@ -114,9 +114,24 @@ Ten verbs, and that is the whole action space: `PRESS`, `OPEN`, `MENU`, `TYPE`, 
 
 ## Permissions
 
-- **Accessibility** — required. System Settings → Privacy & Security → Accessibility.
-- **Screen Recording** — only for the pixel overlay. Run with `--no-pixels` and
-  `pixels=False` to avoid it entirely; `doctor` tells you how much you would lose.
+- **Accessibility** — required.
+- **Screen Recording** — required for the pixel overlay, and therefore required
+  for any interface whose controls accessibility does not name. Run with
+  `--no-pixels` to avoid it; `doctor` shows what that would cost you.
+
+Whichever app you launch `deskhand` from needs both, and macOS decides which app
+that is by looking up the process chain — not by looking at `python`, `uv` or
+this package. Get it wrong and the permission appears granted while the call
+still fails. Ask macOS instead of guessing:
+
+```bash
+uv run deskhand permit
+```
+
+It reports the application the permissions will be attributed to, fires the
+official system dialogs (which name that application), and prints the exact
+System Settings path for whatever is missing. Screen Recording is only re-read
+when a process starts, so restart that application afterwards.
 
 ## Slow networks
 
