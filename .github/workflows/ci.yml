@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  check:
+    # The whole suite runs on Linux on purpose: no module in this package imports
+    # a framework at import time, so the loop and the pixel geometry are testable
+    # without a Mac. If this job ever needs macOS, the seam has been broken.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+      - name: Lint
+        run: uv run ruff check .
+      - name: Format
+        run: uv run ruff format --check .
+      - name: Types
+        run: uv run mypy src
+      - name: Tests
+        run: uv run pytest -q
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install with the macos extra
+        run: uv sync --extra macos --extra dev
+      - name: The macOS package must import without importing pyobjc
+        run: uv run python -c "import deskhand.sensors.macos as m; print(m.AXSource, m.MacSensor)"
+      - name: The loop runs with no permissions at all
+        run: uv run deskhand demo

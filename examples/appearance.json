@@ -1,0 +1,11 @@
+{
+  "goal": "Switch the macOS appearance to Dark",
+  "checks": ["Appearance is set to Dark"],
+  "notes": ["Do not change any other setting.", "Only the Appearance pane may be touched."],
+  "limits": { "max_steps": 8, "max_ms": 30000, "settle_ms": 2000, "no_progress_steps": 3 },
+  "steps": [
+    { "verb": "PRESS", "target_label": "Appearance", "why": "open the Appearance pane" },
+    { "verb": "PRESS", "target_label": "Dark", "why": "choose the Dark option" },
+    { "finish": "DONE", "says": ["Appearance is set to Dark"], "why": "the Dark option is selected" }
+  ]
+}
