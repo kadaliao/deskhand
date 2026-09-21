@@ -148,7 +148,20 @@ download.
 
 ## Status
 
-Early. What works today: the whole loop, the protocol seams, the fusion rule, the batch
+Early, but the execution path is verified on a real machine: `examples/verify_execution.py`
+switches a terminal tab and switches it back, reporting the route it took and the cost of
+each phase. Latest run on a Ghostty window with three tabs:
+
+```
+observe: 24 targets in 324ms
+acted:   route='ax-press' in 17ms | settled in 271ms | step 612ms
+verdict: PASS (switched=True, restored=True, semantic=True)
+```
+
+Acting is nearly free; looking around is not. That 612 ms is the number M3 exists to
+attack, and it is a measurement rather than a claim.
+
+What works today: the whole loop, the protocol seams, the fusion rule, the batch
 attribute reader, the hit-test path, and the scripted desktop with full test coverage.
 
 What is deliberately not done yet: `ScreenCaptureKit` (the current capture call is

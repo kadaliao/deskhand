@@ -108,13 +108,27 @@ class Target:
     kind: str
     label: str = ""
     labels: tuple[str, ...] = ()
-    value: str | None = None
+    value: str | int | float | bool | None = None
+    """The control's own value, with its native type kept.
+
+    Stringifying it looks harmless and is not: a radio button answers ``True`` or
+    ``False`` to "are you the chosen one", and ``"True"`` makes that a comparison
+    of spellings rather than a boolean.
+    """
     actions: frozenset[Verb] = frozenset()
     box: Box | None = None
     source: str = "unknown"
     visual: bool = False
     enabled: bool = True
     focused: bool = False
+    selected: bool | None = None
+    """Whether this is the chosen one, when the source can say.
+
+    Not decoration: "the Dark option is the selected one" is the fact a verifier
+    needs, and a change of selection is a change to what the desktop means.
+    ``None`` for the many elements where the question does not apply.
+    """
+    expanded: bool | None = None
     score: float = 1.0
     note: str = ""
 
@@ -142,6 +156,9 @@ class Target:
             f"value={norm_text(str(self.value))}",
             f"enabled={self.enabled}",
             f"focused={self.focused}",
+            # Selection is meaning, not decoration: "the Dark option is the
+            # selected one" is the whole fact a verifier needs.
+            f"selected={self.selected}",
         ]
         return Fingerprint("semantic", digest(rows))
 
@@ -165,6 +182,10 @@ class Target:
             out["score"] = round(self.score, 2)
         if self.focused:
             out["focused"] = True
+        if self.selected:
+            out["selected"] = True
+        if self.expanded is not None:
+            out["expanded"] = self.expanded
         if not self.enabled:
             out["enabled"] = False
         if self.note:
@@ -182,7 +203,7 @@ def _identity_row(target: Target) -> str:
     """
     return (
         f"{target.kind}|{norm_text(target.label)}|{norm_text(str(target.value))}"
-        f"|{int(target.enabled)}|{target.source}"
+        f"|{int(target.enabled)}|{target.source}|{int(bool(target.selected))}"
     )
 
 
@@ -392,7 +413,13 @@ class Action:
     verb: Verb
     target: str | None = None
     onto: str | None = None
-    value: str | None = None
+    value: str | int | float | bool | None = None
+    """The control's own value, with its native type kept.
+
+    Stringifying it looks harmless and is not: a radio button answers ``True`` or
+    ``False`` to "are you the chosen one", and ``"True"`` makes that a comparison
+    of spellings rather than a boolean.
+    """
     key: str | None = None
     chord: str | None = None
     scroll: str | None = None

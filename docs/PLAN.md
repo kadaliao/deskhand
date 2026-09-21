@@ -63,7 +63,9 @@ changed is what it has to prove:
   radio button pressed with `ax-press`, not a coordinate click.
 - Coordinate clicks are allowed for the row itself, and the count is reported —
   the point is that they are counted, not that they are zero.
-- 3 steps or fewer, per-step `ms.total` reported.
+- 3 steps or fewer, with the per-step breakdown reported. The target for total
+  step cost moved to M3, because M1 measured it at 612 ms and the number is a
+  perception cost, not an action cost.
 
 Needs from the user:
 1. **Accessibility** — already granted on this machine.
@@ -98,7 +100,30 @@ problem, and it clicks nothing:
 uv run deskhand run --task examples/appearance.zh-CN.json --dry-run --focus 系统设置
 ```
 
-### Three bugs the real machine found
+### Execution verified on a real machine
+
+`examples/verify_execution.py` switches a terminal tab and switches back: the
+smallest real action that exercises observe, validate, freshness, act, settle,
+judge and restore, while changing nothing a person would miss. It refuses to act
+on anything that is not a `radiobutton:tabbutton` (the "Close tab" buttons are one
+attribute away in the same row), and it refuses to guess which tab is selected.
+
+| | |
+|---|---|
+| observe | 24 targets in **324 ms** (Ghostty, 3 tabs) |
+| act | **17 ms**, route **`ax-press`** -- semantic, no coordinate click |
+| settle | **271 ms** |
+| **step total** | **612 ms** |
+| outcome | switched, `revision` and `content` both changed, and the original tab was **restored and verified** |
+
+`verdict: PASS (switched=True, restored=True, semantic=True)`
+
+So the execution path works on real hardware, and the plan's original "per-step
+under 300 ms" criterion **is not met: it is 612 ms**, of which 595 ms is looking
+around rather than acting. Acting is nearly free; perception is not. That is the
+whole case for M3, and it is now a measurement instead of a suspicion.
+
+### Four bugs the real machine found
 
 All fixed, all pinned by regression tests, all invisible to review and to
 fake-desktop tests:
@@ -112,6 +137,20 @@ fake-desktop tests:
    an element's subrole and inside its identity hash.
 3. `AXPosition` is an `AXValueRef` with no `.x` attribute, so the obvious
    `value.x` raised and every rectangle in the tree was silently lost.
+4. **"Which one is selected" was being thrown away**, in two different ways.
+   AppKit expresses selection on the *parent* (`AXSelectedChildren`,
+   `AXSelectedRows`) and children often say nothing; and where a control does
+   answer, it answers with a boolean `AXValue` -- Ghostty's tabs are
+   `AXRadioButton` with `AXValue` True for the active tab. Reading only
+   `AXChildren` lost the first, and stringifying values into `value="True"` turned
+   the second from a boolean into a spelling. Both are fixed, and selection is now
+   part of what a target means: it appears in the freshness fingerprint and in
+   both digests, so *choosing* an option registers as a change. That matters
+   because the whole task is "choose Dark".
+
+Also from this run: `--focus` needed a retry, because Chrome (rather than the
+user) stole focus back on the first attempt. The verification script checks the
+frontmost application before acting and aborts when it is not the intended one.
 
 ## M2 — Electron, where accessibility has to be asked · written
 
@@ -155,6 +194,9 @@ internal id as a name a person would recognise.
 ---
 
 ## M3 — perception cost and settling · todo
+
+Baseline measured in M1: **612 ms per step**, of which 324 ms is observing and
+271 ms is settling. Acting is 17 ms. Everything below attacks the 595 ms.
 
 The two known inefficiencies, in order of payoff.
 

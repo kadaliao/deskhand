@@ -238,16 +238,17 @@ class MacSensor:
         if text is None:
             raise CannotDo(f"{action.verb} arrived without a value")
         if action.verb is Verb.TYPE and self.ax.can_set_value(ref):
-            return self.ax.set_value(ref, text)
+            return self.ax.set_value(ref, str(text))
 
         if action.verb is Verb.SET:
-            # A slider or stepper cannot be driven by keystrokes.
+            # A slider or stepper cannot be driven by keystrokes, and it wants the
+            # value as it was supplied rather than as a spelling of it.
             return self.ax.set_value(ref, text)
 
         self._focus_or_die(ref)
         keys.select_all()
         time.sleep(0.05)
-        keys.type_text(text)
+        keys.type_text(str(text))
         return "ax-focus+keys"
 
     def _focus_or_die(self, ref: Any) -> None:

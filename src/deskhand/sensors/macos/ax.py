@@ -90,9 +90,46 @@ WANTED = (
     "AXSize",
     "AXHidden",
     "AXChildren",
+    # Selection is expressed by the *parent* on AppKit: a tab view, table, outline
+    # and browser all report which of their children is chosen, and the children
+    # themselves often report nothing. Reading only AXChildren loses "which one is
+    # selected", which is the entire fact behind "choose the Dark option".
+    "AXSelectedChildren",
+    "AXSelectedRows",
 )
 
-FALLBACK = ("AXRole", "AXTitle", "AXValue", "AXEnabled", "AXPosition", "AXSize", "AXChildren")
+FALLBACK = (
+    "AXRole",
+    "AXTitle",
+    "AXValue",
+    "AXEnabled",
+    "AXPosition",
+    "AXSize",
+    "AXChildren",
+    "AXSelectedChildren",
+    "AXSelectedRows",
+)
+
+SELECTION_ROLES = frozenset(
+    {
+        "AXRadioButton",
+        "AXCheckBox",
+        "AXMenuItem",
+        "AXSwitch",
+        "AXToggleButton",
+    }
+)
+"""Roles whose boolean ``AXValue`` *is* the selection state.
+
+Measured on Ghostty: its tabs are ``AXRadioButton`` with subrole ``AXTabButton``,
+they expose no ``AXSelected`` at all, and their ``AXValue`` is ``True`` for the
+selected tab and ``False`` for the others. Nothing else in the tree says which tab
+is active.
+"""
+
+MAX_SELECTION_READS = 8
+"""Reading the selected children costs a call each. More than a handful is a
+table with a block selected, and the block is not what we are aiming at."""
 
 PAIR = 2
 """A point or a size is two numbers."""
@@ -256,6 +293,34 @@ class AXSource:
         # not as null, so every value goes through the same unwrapping.
         return {name: unwrap(value) for name, value in zip(names, values, strict=False)}
 
+    def _selection_of_children(self, details: dict[str, Any]) -> frozenset[str]:
+        """The ids of this element's selected children, if it says which they are.
+
+        The children are re-read to compute their ids the same way the walk will,
+        so the two can be matched. Only elements that answer at all pay for this:
+        a tab view, a table, an outline, a browser.
+        """
+        refs = [
+            *_iter(details.get("AXSelectedChildren")),
+            *_iter(details.get("AXSelectedRows")),
+        ][:MAX_SELECTION_READS]
+        ids: set[str] = set()
+        for child in refs:
+            child_details = self._details(child)
+            role = child_details.get("AXRole")
+            if role is None:
+                continue
+            label, _ = _label(child_details)
+            ids.add(
+                _identify(
+                    str(role),
+                    str(child_details.get("AXSubrole") or ""),
+                    label,
+                    _box(child_details.get("AXPosition"), child_details.get("AXSize")),
+                )
+            )
+        return frozenset(ids)
+
     def _actions(self, ref: Any) -> set[str]:
         try:
             error, names = ax().AXUIElementCopyActionNames(ref, None)
@@ -308,6 +373,7 @@ class AXSource:
         depth: int,
         budget: int,
         path: str,
+        selected_ids: frozenset[str] = frozenset(),
     ) -> None:
         if depth > self.max_depth or len(found) >= budget:
             return
@@ -323,7 +389,7 @@ class AXSource:
             return
         role = str(role)
 
-        target = self._target(ref, role, details, path=path)
+        target = self._target(ref, role, details, path=path, selected_ids=selected_ids)
         if target is not None:
             unique = target.id
             n = 2
@@ -369,6 +435,7 @@ class AXSource:
         details: dict[str, Any],
         *,
         path: str = "",
+        selected_ids: frozenset[str] = frozenset(),
     ) -> Target | None:
         if details.get("AXHidden") is True:
             return None
@@ -422,17 +489,30 @@ class AXSource:
         note = ",".join(flags)
 
         target_id = _identify(role, subrole, label, box, path)
+        # A parent that tells us which of its children is chosen is authoritative:
+        # the child itself usually says nothing. No parent answer means "unknown",
+        # not "not selected".
+        own = details.get("AXSelected")
+        raw_value = details.get("AXValue")
+        if selected_ids:
+            selected: bool | None = target_id in selected_ids
+        elif isinstance(raw_value, bool) and role in SELECTION_ROLES:
+            selected = raw_value
+        else:
+            selected = None if own is None else bool(own)
         return Target(
             id=target_id,
             kind=_kind(role, subrole),
             label=label,
-            value=None if value is None else str(value),
+            value=value if isinstance(value, (str, int, float, bool)) else None,
             actions=frozenset(caps),
             box=box,
             source="ax",
             visual=False,
             enabled=True if details.get("AXEnabled") is None else bool(details.get("AXEnabled")),
             focused=bool(details.get("AXFocused")),
+            selected=selected,
+            expanded=None if details.get("AXExpanded") is None else bool(details.get("AXExpanded")),
             note=note,
         )
 
@@ -494,8 +574,12 @@ class AXSource:
         click(box, button="right")
         return "click-menu"
 
-    def set_value(self, ref: Any, value: str) -> str:
-        """Replace a control's value through the accessibility API."""
+    def set_value(self, ref: Any, value: Any) -> str:
+        """Replace a control's value through the accessibility API.
+
+        The value keeps its native type: a slider wants a number, a checkbox wants
+        a boolean, a text field wants a string.
+        """
         if not self._settable(ref, "AXValue"):
             raise CannotDo("AXValue is not settable on this element")
         error = ax().AXUIElementSetAttributeValue(ref, "AXValue", value)

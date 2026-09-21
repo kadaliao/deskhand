@@ -88,6 +88,54 @@ class TestDigests:
         assert content_digest((button("a", "Play"),)) != content_digest((focused,))
 
 
+class TestSelection:
+    def test_selecting_a_different_option_changes_the_digests(self) -> None:
+        # The class of task this project exists for: choose the Dark option.
+        # Without selection in the digest, choosing it looks like nothing happened.
+        off = (
+            Target(id="a", kind="radiobutton", label="Dark", selected=False, box=Box(0, 0, 10, 10)),
+        )
+        on = (
+            Target(id="a", kind="radiobutton", label="Dark", selected=True, box=Box(0, 0, 10, 10)),
+        )
+        assert structure_digest(off) != structure_digest(on)
+        assert content_digest(off) != content_digest(on)
+
+    def test_selection_is_part_of_what_a_target_means(self) -> None:
+        off = Target(id="a", kind="radiobutton", label="Dark", selected=False)
+        on = Target(id="a", kind="radiobutton", label="Dark", selected=True)
+        assert not off.fingerprint().matches(on.fingerprint())
+
+    def test_an_unknown_selection_state_is_reported_as_such(self) -> None:
+        target = Target(id="a", kind="button", label="Go")
+        assert target.selected is None
+
+
+class TestValueTypes:
+    def test_a_boolean_value_keeps_its_type(self) -> None:
+        # The regression: a radio button answering True to "are you chosen" was
+        # being stringified into "True", turning a boolean into a spelling.
+        target = Target(id="a", kind="radiobutton", label="Dark", value=True, selected=True)
+        assert target.value is True
+        assert target.brief()["value"] is True
+        assert target.brief()["selected"] is True
+
+    def test_a_numeric_value_keeps_its_type(self) -> None:
+        # A slider wants a number, and SET passes it through natively.
+        assert Target(id="a", kind="slider", label="Volume", value=0.5).value == 0.5
+
+    def test_a_checkbox_change_moves_the_digests(self) -> None:
+        off = (Target(id="a", kind="checkbox", label="Enabled", value=False, selected=False),)
+        on = (Target(id="a", kind="checkbox", label="Enabled", value=True, selected=True),)
+        assert structure_digest(off) != structure_digest(on)
+        assert content_digest(off) != content_digest(on)
+        assert not off[0].fingerprint().matches(on[0].fingerprint())
+
+    def test_a_false_selection_is_not_shown_in_the_brief(self) -> None:
+        # Only the interesting state is worth spending tokens on.
+        assert "selected" not in Target(id="a", kind="button", label="Go", selected=False).brief()
+
+
 class TestTarget:
     def test_spoken_merges_the_extra_names(self) -> None:
         target = Target(
