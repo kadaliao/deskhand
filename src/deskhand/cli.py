@@ -8,6 +8,7 @@ tells you how much of the current app accessibility can actually describe.
 from __future__ import annotations
 
 import argparse
+import statistics
 import sys
 import time
 import warnings
@@ -44,6 +45,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     doctor = sub.add_parser("doctor", help="permissions, coverage and timing for the frontmost app")
     doctor.add_argument("--json", action="store_true")
+
+    bench = sub.add_parser("bench", help="measure what an observation and a settle actually cost")
+    bench.add_argument(
+        "--focus", default=None, help="bring this running application to the front first"
+    )
+    bench.add_argument("--json", action="store_true")
+    bench.add_argument("--no-pixels", action="store_true")
+    bench.add_argument("--frames", type=int, default=8, help="how many observations to time")
+    bench.add_argument("--settle-frames", type=int, default=5, help="how many settles to time")
+    bench.add_argument("--budget", type=int, default=2500, help="settle budget in ms")
 
     permit = sub.add_parser(
         "permit", help="ask macOS for the missing permissions and name the app to toggle"
@@ -82,6 +93,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "probe": _probe,
         "doctor": _doctor,
         "permit": _permit,
+        "bench": _bench,
         "run": _run,
     }
     try:
@@ -122,6 +134,63 @@ def _permit(args: argparse.Namespace) -> int:
             if granted:  # pragma: no cover - only when a permission is already in place
                 print("  (it was granted while we were asking)")
     return OK if not outstanding else ENVIRONMENT
+
+
+def _bench(args: argparse.Namespace) -> int:
+    """Time the parts of a step. Nothing here acts on anything.
+
+    The first observation of an application is not like the others: macOS builds
+    an accessibility tree lazily, so the first request pays for construction and
+    every later one is an order of magnitude cheaper. Reporting only one number
+    for "cost of an observation" is how a project ends up optimising the wrong
+    thing, so this reports the first frame and the rest separately.
+    """
+    _focus(args)
+    sensor = _mac_source(no_pixels=args.no_pixels)
+
+    observes: list[int] = []
+    targets = 0
+    for _ in range(max(1, args.frames)):
+        started = time.perf_counter()
+        view = sensor.observe()
+        observes.append(round((time.perf_counter() - started) * 1000))
+        targets = len(view.targets)
+
+    probes: list[int] = []
+    for _ in range(max(1, args.frames)):
+        started = time.perf_counter()
+        sensor.probe()
+        probes.append(round((time.perf_counter() - started) * 1000))
+
+    settles: list[int] = []
+    for _ in range(max(1, args.settle_frames)):
+        started = time.perf_counter()
+        view = sensor.settle(view, budget_ms=args.budget)
+        settles.append(round((time.perf_counter() - started) * 1000))
+
+    warm = observes[1:] or observes
+    observe_warm = int(statistics.median(warm))
+    report = {
+        "app": view.app,
+        "window": view.window,
+        "targets": targets,
+        "observe_first_ms": observes[0],
+        "observe_warm_ms": observe_warm,
+        "probe_ms": round(statistics.median(probes), 1),
+        "settle_quiet_ms": round(statistics.median(settles), 1),
+        "samples": {"observe": observes, "probe": probes, "settle": settles},
+    }
+    if args.json:
+        print(json_io.dump(report))
+        return OK
+
+    print(f"app={view.app} window={view.window!r} targets={targets}")
+    print(f"observe, first frame : {observes[0]:>6}ms   (the application builds its tree here)")
+    print(f"observe, warm median : {observe_warm:>6}ms   (samples {warm})")
+    print(f"probe,   warm median : {report['probe_ms']:>6}ms")
+    print(f"settle, quiet desktop: {report['settle_quiet_ms']:>6}ms   (samples {settles})")
+    print(f"\nsteady-state step floor: {observe_warm + report['settle_quiet_ms']}ms + act")
+    return OK
 
 
 def _output_flags(parser: argparse.ArgumentParser) -> None:

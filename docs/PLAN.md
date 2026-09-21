@@ -152,7 +152,14 @@ Also from this run: `--focus` needed a retry, because Chrome (rather than the
 user) stole focus back on the first attempt. The verification script checks the
 frontmost application before acting and aborts when it is not the intended one.
 
-## M2 — Electron, where accessibility has to be asked · written
+## M2 — Electron, where accessibility has to be asked · written, premise in doubt
+
+**Read the Chromium finding in `docs/BENCHMARKS.md` before trusting the acceptance
+criteria below.** Consecutive observations of one Chrome window returned 158, 520,
+158, 519 and 158 elements, and the reason is not established. Id-addressed targets
+can therefore disappear between deciding and acting. "Zero coordinate clicks" was
+written before that was measured, and may need to become "every coordinate click is
+counted and explained".
 
 Goal: turn the reference project's pixel-heavy Spotify example into a mostly
 semantic one.
@@ -193,28 +200,62 @@ internal id as a name a person would recognise.
 
 ---
 
-## M3 — perception cost and settling · todo
+## M3 — perception cost and settling · done, with the premise corrected
 
-Baseline measured in M1: **612 ms per step**, of which 324 ms is observing and
-271 ms is settling. Acting is 17 ms. Everything below attacks the 595 ms.
+Baseline measured in M1: "612 ms per step, of which 595 ms is looking around".
+**That baseline was wrong**, and finding out why was most of the value of this
+milestone. 612 ms was a single step in a fresh process, and the first
+accessibility request to an application costs 300-360 ms on both applications
+measured because macOS builds the tree lazily. Every later walk is 9-53 ms. Details
+and method in `docs/BENCHMARKS.md`.
 
-The two known inefficiencies, in order of payoff.
+Done:
 
-1. **Event-driven settling.** Subscribe with `AXObserver` to window, focus,
-  value and children notifications instead of polling a structural probe. This
-  removes one accessibility walk per poll from every step.
-2. **Region-scoped recognition.** Cache the last screenshot; only re-run
-  recognition on regions whose window rectangle changed, instead of the whole
-  window on every observation.
-3. **`ScreenCaptureKit`.** `CGWindowListCreateImage` is deprecated by Apple and
-   the code already says so. This is the replacement.
+- **Fixed sleeps removed from settling.** The loop slept 50 ms before its first
+  look and 50 ms between looks. It now looks, and yields only while the interface
+  is actually changing.
+- **Settling compares shape, not values.** A page with a clock, a counter or a
+  caret in it changes a value on every read and therefore never looked quiet: one
+  Chrome page spent the whole 2500 ms budget on every step. `shape_digest` keeps
+  identity, labels, enabled state and selection, and drops values.
+- **`before` seeds the wait.** A walk taken right after acting still shows the
+  pre-action state, and the old loop would happily agree with it twice and declare
+  the interface settled.
+- **A frame cap, reported honestly.** A page that changes on every read gets six
+  walks and then a view marked `settled: false`, instead of a silent 2.5 second
+  stall or a half-settled view presented as a settled one.
+- **The waiting loop is now a tested unit.** `deskhand/settle.py` takes its clock
+  and its sleep as arguments, so it is tested by the iteration rather than by
+  stopwatch. It had no tests before, which is why it stayed wrong.
+- **`deskhand bench`** so these numbers can be re-taken rather than trusted.
+- **Fewer round trips per node:** action names are not fetched for nodes with no
+  name, no value, no geometry and no interactive role.
 
-Acceptance:
-- Idle settle time per step drops below **50 ms** (measured by `ms.settle`).
-- A full observation on a dense window costs less than the current baseline;
-  the number is recorded in `docs/BENCHMARKS.md` with the hardware.
+Result:
 
----
+| | before | after |
+|---|---|---|
+| Ghostty, settle | ~271 ms (100 ms of it asleep) | **19 ms** |
+| Chrome live page, settle | 2532 ms (full budget, never converged) | 68-670 ms, capped, `settled: false` |
+| step, quiet interface | 612 ms | **≈ 45 ms** |
+| step, Chromium window | — | ≈ 90 ms |
+
+The `<200 ms per step` target is met for a quiet interface. The first observation
+of an application costs ~320 ms and cannot be avoided; it is paid once per
+application per process.
+
+Still open in M3, in the order the measurements now justify them:
+
+1. **Region-scoped recognition** and **`ScreenCaptureKit`** — unchanged, and
+   unmeasurable here until Screen Recording is granted.
+2. **Notification-driven waiting** (`AXObserver`). Much less valuable than it
+   looked: polling a warm tree costs 5 ms, so event-driven settling would save
+   single-digit milliseconds on a quiet interface. It is now justified by the
+   Chromium finding instead — on a tree that changes on every read, an event stream
+   is the only way to know whether anything is *still* happening.
+3. **Incremental observation.** With notifications naming the element that changed,
+   a step could patch the previous view instead of walking the tree. This is the
+   only route to a materially faster step, and it depends on (2).
 
 ## M4 — the decision seam · todo
 

@@ -52,3 +52,53 @@ rediscovered later.
   accessibility notifications. That is one accessibility walk per poll rather
   than a full pixel observation. `AXObserver` is the real answer and is on the
   plan, not hidden.
+
+---
+
+# Mistakes this project made, and what they have in common
+
+Kept here on purpose. Most of these are the same mistakes the reference project
+made, in the same places, which is the useful part: knowing that a class of bug
+exists does not stop you from writing it.
+
+### A benchmark that measured the wrong thing
+
+`docs/PLAN.md` announced "612 ms per step, of which 595 ms is looking around" and
+built milestone M3 on it. It was measured by running one step in a fresh process,
+and the first accessibility request to an application costs 300–360 ms because
+macOS builds the tree lazily. Warm walks are 9–53 ms. The real steady-state step
+was about 45 ms, not 612. The lesson is not "measure more"; it is **measure the
+same thing twice and be suspicious of the first number**.
+
+### Hard-coded sleeps in the settle loop
+
+The reference project hard-codes `0.03 / 0.18 / 0.65 / 1.5 / 2.5 / 0.10 / 0.12`
+as settle timings. This project's first settle loop slept 50 ms before its first
+look and 50 ms between looks. Same bug, smaller numbers, and it cost about 100 ms
+on every step of a desktop that had already settled. Nothing tested it, because it
+looks obviously correct.
+
+### A settle digest that was wrong in the opposite direction
+
+The reference project's structural signature deliberately ignores recognised text,
+so a list whose content changed looks unchanged and the run reports BLOCKED. This
+project's first version included every element's `value`, so a page with a clock in
+it never looked quiet and settling burned its entire budget. One was too blunt, one
+was too sensitive, and neither was tested against a live page.
+
+### A field that existed in the design and not in the code
+
+The review of the reference project complained about `post_action_settle_s`: a
+config field that was declared, documented on the website, and read by nothing.
+This project then read `AXSelected` and `AXExpanded` on every walk, documented
+"selection is meaning" in `_place_row`, and **had no `selected` field on `Target` at
+all**. It surfaced only because a real action needed to know which tab was active in
+order to put it back.
+
+### The finding that came from being told "lai"
+
+Running one real action found three defects that 108 tests and a careful review had
+not: selection is expressed by the parent, a boolean `value` was being turned into
+a string, and the settle loop could not tell "the effect has not appeared yet" from
+"nothing is happening". The common thread is that all three needed a real
+application's answers, and no amount of reading code substitutes for that.

@@ -12,12 +12,14 @@ from collections.abc import Mapping, Sequence
 
 from ..errors import CannotDo
 from ..fusion import box_of
+from ..settle import converge
 from ..types import (
     Action,
     Target,
     Verb,
     View,
     content_digest,
+    shape_digest,
     structure_digest,
 )
 
@@ -112,5 +114,16 @@ class FakeSensor:
         return "fake"
 
     def settle(self, before: View, *, budget_ms: int) -> View:
-        del before, budget_ms
-        return self.observe()
+        """Use the same waiting loop as the real sensor.
+
+        Not a no-op on purpose: the fake desktop is what the runner's failure paths
+        are tested against, and a settle that returned immediately would be testing
+        a different machine from the one that ships.
+        """
+        result = converge(
+            self.view,
+            lambda view: shape_digest(view.targets),
+            budget_s=budget_ms / 1000.0,
+            start_from=shape_digest(before.targets),
+        )
+        return result.last

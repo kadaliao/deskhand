@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from ...errors import CannotDo, NoPermission, StaleTarget
 from ...fusion import fuse
+from ...settle import converge
 from ...types import (
     Action,
     Box,
@@ -21,6 +22,7 @@ from ...types import (
     Verb,
     View,
     content_digest,
+    shape_digest,
     structure_digest,
 )
 from . import keys
@@ -32,9 +34,6 @@ logger = logging.getLogger(__name__)
 Pixels = bool | Literal["auto"]
 
 FOCUS_RETRIES = (0.06, 0.14)
-
-STABLE_FRAMES = 2
-"""Consecutive unchanged structural probes before the desktop counts as quiet."""
 
 
 class MacSensor:
@@ -68,15 +67,20 @@ class MacSensor:
 
     def observe(self) -> View:
         semantic = self.ax.targets()
+        if self.ax.frame is None:  # pragma: no cover - targets() always sets it
+            raise CannotDo("no frontmost window")
+        return self._fuse(semantic, pixels=self._want_pixels(len(semantic)))
+
+    def _fuse(self, semantic: tuple[Target, ...], *, pixels: bool) -> View:
         frame = self.ax.frame
-        if frame is None:  # pragma: no cover - targets() always sets it
+        if frame is None:  # pragma: no cover - the walk always sets it
             raise CannotDo("no frontmost window")
 
         groups: list[tuple[int, tuple[Target, ...]]] = [(self.ax.rank, semantic)]
         visual: tuple[Target, ...] = ()
         used_pixels = False
 
-        if self._want_pixels(len(semantic)) and screen_capture_allowed():
+        if pixels and screen_capture_allowed():
             used_pixels = True
             try:
                 visual = self.ocr.targets(pid=frame.pid, title=frame.title, box=frame.box)
@@ -111,25 +115,39 @@ class MacSensor:
     # ----------------------------------------------------------------- settle
 
     def settle(self, before: View, *, budget_ms: int) -> View:
-        del before  # the probe re-derives structure from scratch; nothing to diff
-        deadline = time.perf_counter() + max(0.0, budget_ms / 1000.0)
-        time.sleep(0.05)
-        last: str | None = None
-        stable = 0
-        while time.perf_counter() < deadline:
-            try:
-                signature = self.probe()
-            except Exception as exc:  # a probe failure must not break the loop
-                logger.debug("probe failed during settle: %s", exc)
-                break
-            if signature == last:
-                stable += 1
-                if stable >= STABLE_FRAMES:
-                    break
-            else:
-                last, stable = signature, 0
-            time.sleep(0.05)
-        return self.observe()
+        """Wait until the desktop stops changing, then observe once more.
+
+        ``before`` seeds the wait. Without it, a walk taken immediately after acting
+        still shows the pre-action state, two more identical walks agree with it,
+        and the wait ends having learned nothing.
+
+        Settling compares *shape* rather than full structure: a live page with a
+        clock, a counter or a caret in it changes a value on every single read, and
+        waiting for that to stop spends the entire budget on every step. Whether
+        something changed is judged later, on the full digest, where a value change
+        does count.
+
+        The waiting itself lives in ``deskhand.settle``, which is where it can be
+        tested by the iteration instead of by stopwatch.
+        """
+        result = converge(
+            self.ax.targets,
+            shape_digest,
+            budget_s=budget_ms / 1000.0,
+            start_from=shape_digest(before.targets),
+        )
+        view = self._fuse(result.last, pixels=self._want_pixels(len(result.last)))
+        if not result.stable:
+            # Say so rather than presenting a half-settled view as a settled one.
+            logger.info(
+                "settle gave up after %d walks of %dms: the interface never stopped moving",
+                result.frames,
+                budget_ms,
+            )
+            object.__setattr__(
+                view, "notes", {**view.notes, "settled": False, "settle_walks": result.frames}
+            )
+        return view
 
     # ---------------------------------------------------------------- freshness
 

@@ -207,6 +207,13 @@ def _identity_row(target: Target) -> str:
     )
 
 
+def _shape_row(target: Target) -> str:
+    return (
+        f"{target.kind}|{norm_text(target.label)}|{int(target.enabled)}"
+        f"|{target.source}|{int(bool(target.selected))}"
+    )
+
+
 def _place_row(target: Target) -> str:
     box = target.box
     place = "no-box" if box is None else f"{int(box.x // GRID)},{int(box.y // GRID)}"
@@ -219,6 +226,22 @@ def structure_digest(targets: tuple[Target, ...]) -> str:
     Sorted, so accessibility walk order cannot change the answer.
     """
     return digest(sorted(_identity_row(t) for t in targets))
+
+
+def shape_digest(targets: tuple[Target, ...]) -> str:
+    """What is on screen, ignoring what it currently says.
+
+    Used for settling, and the difference from :func:`structure_digest` matters.
+    A live page has a clock, a counter, a caret or a progress percentage in it, and
+    those change value on every read; a page that is doing nothing still looks like
+    it is changing forever, and waiting for it to stop costs the whole settle
+    budget (measured: 2532 ms of a 2500 ms budget on one Chrome page).
+
+    Shape keeps identity, labels, enabled state and selection, and drops values.
+    A typed character lands in a value and settles almost immediately; a panel that
+    opens, a list that fills, or an option that becomes selected changes the shape.
+    """
+    return digest(sorted(_shape_row(t) for t in targets))
 
 
 def content_digest(targets: tuple[Target, ...]) -> str:
