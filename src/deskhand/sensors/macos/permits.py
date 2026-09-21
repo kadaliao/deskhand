@@ -24,6 +24,25 @@ SCREEN_RECORDING = "screen_recording"
 
 SETTINGS = "System Settings > Privacy & Security"
 
+CAN_PROMPT = {ACCESSIBILITY: True, SCREEN_RECORDING: False}
+"""Whether macOS will show its own dialog for this permission.
+
+Measured, not assumed. For Screen Recording, tccd answers a CLI or daemon caller
+with ``AUTHREQ_CTX ... preflight=no`` followed by "Service
+kTCCServiceScreenCapture does not allow prompting; returning denied.": no dialog
+appears and the caller is told nothing. Accessibility does prompt, and asking for
+it also adds the calling application to the Accessibility list as a pending
+entry, which is most of the work.
+"""
+
+_PANE_BASE = "x-apple.systempreferences:com.apple.preference.security?Privacy_"
+
+PANE_URL = {
+    ACCESSIBILITY: _PANE_BASE + "Accessibility",
+    SCREEN_RECORDING: _PANE_BASE + "ScreenCapture",
+}
+FACE = {ACCESSIBILITY: "Accessibility", SCREEN_RECORDING: "Screen Recording"}
+
 
 def status() -> dict[str, bool]:
     return {ACCESSIBILITY: trusted(), SCREEN_RECORDING: screen_capture_allowed()}
@@ -34,21 +53,49 @@ def missing(current: dict[str, bool] | None = None) -> list[str]:
     return [name for name, granted in state.items() if not granted]
 
 
-def request(name: str) -> bool:
-    """Ask macOS for a permission, which makes it show its dialog.
+def request(name: str) -> tuple[bool, str]:
+    """Ask macOS for a permission. Returns ``(granted_now, what happened)``.
 
-    Returns the state *after* asking. A user decision does not happen inside this
-    call, so a missing permission stays missing here even when the request was
-    shown; what matters is that the dialog names the application.
+    The decision never happens inside this call: the user has to answer, and for
+    Screen Recording there is no dialog to answer. The returned note says which
+    of those it was, because "I asked and nothing happened" is the moment people
+    give up on a permission problem.
     """
     if name == ACCESSIBILITY:
         options = {ax().kAXTrustedCheckOptionPrompt: True}
-        return bool(ax().AXIsProcessTrustedWithOptions(options))
+        granted = bool(ax().AXIsProcessTrustedWithOptions(options))
+        note = (
+            "asked; macOS shows an Accessibility dialog and lists this application"
+            if not granted
+            else "already granted"
+        )
+        return granted, note
     if name == SCREEN_RECORDING:
         from .ocr import _quartz
 
-        return bool(_quartz().CGRequestScreenCaptureAccess())
+        granted = bool(_quartz().CGRequestScreenCaptureAccess())
+        if granted:
+            return True, "already granted"
+        return False, (
+            "macOS will not prompt for Screen Recording from a command line process; "
+            "add the application in System Settings by hand"
+        )
     raise ValueError(f"unknown permission {name!r}")
+
+
+def open_pane(name: str) -> bool:
+    """Open the exact System Settings page for a permission.
+
+    The only part of this problem that can be automated with confidence: showing
+    a person the right list is more useful than explaining where it is.
+    """
+    url = PANE_URL.get(name)
+    if url is None:
+        raise ValueError(f"unknown permission {name!r}")
+    from .ax import appkit
+
+    nsurl = appkit().NSURL.URLWithString_(url)
+    return bool(appkit().NSWorkspace.sharedWorkspace().openURL_(nsurl))
 
 
 def blame() -> dict[str, Any]:
@@ -88,11 +135,17 @@ def to_do(current: dict[str, bool] | None = None, owner: dict[str, Any] | None =
         for entry in who.get("chain") or []:
             lines.append(f"  process chain: {entry}")
 
-    if not state[ACCESSIBILITY]:
-        lines.append(f"Accessibility: {SETTINGS} > Accessibility")
-    if not state[SCREEN_RECORDING]:
-        lines.append(f"Screen Recording: {SETTINGS} > Screen Recording")
+    for name in (ACCESSIBILITY, SCREEN_RECORDING):
+        if state[name]:
+            continue
+        lines.append(f"{FACE[name]}: {SETTINGS} > {FACE[name]}")
+        if not CAN_PROMPT[name]:
+            lines.append(
+                f"  macOS cannot prompt for {FACE[name]} from a command line process, so there is"
+            )
+            lines.append("  no dialog to click: add the application in that list with the + button")
 
     lines.append("after granting, restart the application named above; macOS only")
     lines.append("re-reads Screen Recording permission at process start")
+    lines.append("`deskhand permit --open` jumps straight to the right settings page")
     return lines

@@ -49,6 +49,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "permit", help="ask macOS for the missing permissions and name the app to toggle"
     )
     permit.add_argument("--json", action="store_true")
+    permit.add_argument(
+        "--open",
+        action="store_true",
+        help="open the System Settings page for whatever is missing",
+    )
 
     run = sub.add_parser("run", help="run a task file against the real desktop")
     run.add_argument("--task", required=True, help="JSON task, optionally with a steps script")
@@ -89,16 +94,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _permit(args: argparse.Namespace) -> int:
     """Trigger macOS's own dialogs, which name the application to authorize."""
     from .sensors.macos import blame, request, status, to_do
+    from .sensors.macos.permits import open_pane
 
     current = status()
     owner = blame()
     outstanding = [name for name, granted in current.items() if not granted]
-    for name in outstanding:
-        # Shows the system dialog. A decision does not happen inside this call.
-        request(name)
-    report = {
+    asked = {name: request(name) for name in outstanding}
+    if args.open:
+        for name in outstanding:
+            open_pane(name)
+    report: dict[str, Any] = {
         "granted": current,
-        "requested": outstanding,
+        "requested": {
+            name: {"granted": granted, "note": note} for name, (granted, note) in asked.items()
+        },
         "attributed_to": owner,
         "instructions": to_do(current, owner),
         "recheck": status(),
@@ -108,9 +117,10 @@ def _permit(args: argparse.Namespace) -> int:
     else:
         for line in report["instructions"]:
             print(line)
-        if outstanding:
-            print(f"\nasked macOS for: {', '.join(outstanding)}")
-            print("if a dialog appeared, the name on it is the app to toggle")
+        for name, (granted, note) in asked.items():
+            print(f"\n{name}: {note}")
+            if granted:  # pragma: no cover - only when a permission is already in place
+                print("  (it was granted while we were asking)")
     return OK if not outstanding else ENVIRONMENT
 
 

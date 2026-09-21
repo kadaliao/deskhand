@@ -67,13 +67,28 @@ changed is what it has to prove:
 
 Needs from the user:
 1. **Accessibility** — already granted on this machine.
-2. **Screen Recording** — now required for M1, because of the finding above.
-   Find out which application it belongs to rather than guessing:
-   `uv run deskhand permit` reports the responsible application, fires the system
-   dialogs that name it, and prints the System Settings path. On this machine the
-   chain is `python <- uv <- bash <- pi <- fish <- herdr`, and `herdr` runs
-   detached from its terminal, so nothing in the chain is the terminal you typed
-   in — which is exactly why guessing goes wrong.
+2. **Screen Recording** — now required for M1, because of the finding above, and
+   it cannot be granted from here. Measured with `log show`:
+
+   ```
+   tccd: service=kTCCServiceScreenCapture, preflight=no
+   tccd: Service kTCCServiceScreenCapture does not allow prompting; returning denied.
+   ```
+
+   macOS **refuses to prompt** for Screen Recording when the caller is a command
+   line or daemon process, so there is no dialog to click and no name to read off
+   one. `deskhand permit` reports this instead of pretending to have asked, prints
+   the responsible application when the process chain contains one, and
+   `--open` jumps straight to the settings page.
+
+   The practical consequence on this machine: the chain is
+   `python <- uv <- bash <- pi <- fish <- herdr`, and `herdr` runs detached from
+   its terminal, so no ancestor is the terminal the command was typed in and there
+   is no `.app` to add to the list with `+`. The way through is to run deskhand
+   from a plain terminal window (Ghostty, iTerm, Terminal) opened directly, so the
+   terminal application is responsible, grant *that* Screen Recording, and restart
+   it. Accessibility, by contrast, does prompt, and asking for it also adds the
+   application to the Accessibility list as a pending entry.
 3. The target application frontmost, or `--focus <name>`.
 
 Before running anything, rehearse it. This is what caught the localisation

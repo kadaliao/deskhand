@@ -64,10 +64,42 @@ class TestInstructions:
         assert "System Settings" not in joined
 
 
+class TestWhatCanBePrompted:
+    def test_screen_recording_says_there_is_no_dialog_to_click(self) -> None:
+        joined = " ".join(permits.to_do(PIXELS_ONLY_MISSING, NAMED))
+        assert "cannot prompt for Screen Recording" in joined
+        assert "add the application in that list with the + button" in joined
+
+    def test_accessibility_does_not_get_the_no_dialog_warning(self) -> None:
+        only_accessibility = {permits.ACCESSIBILITY: False, permits.SCREEN_RECORDING: True}
+        joined = " ".join(permits.to_do(only_accessibility, NAMED))
+        assert "cannot prompt" not in joined
+
+    def test_the_measured_reality_is_recorded_per_permission(self) -> None:
+        # Measured on macOS: tccd logs "Service kTCCServiceScreenCapture does not
+        # allow prompting; returning denied." for a command line caller.
+        assert permits.CAN_PROMPT[permits.ACCESSIBILITY] is True
+        assert permits.CAN_PROMPT[permits.SCREEN_RECORDING] is False
+
+    def test_every_permission_has_a_settings_page(self) -> None:
+        # The anchors are the macOS contract; the display names differ from them
+        # ("Screen Recording" vs the pane's Privacy_ScreenCapture).
+        anchors = {
+            permits.ACCESSIBILITY: "Privacy_Accessibility",
+            permits.SCREEN_RECORDING: "Privacy_ScreenCapture",
+        }
+        for name, anchor in anchors.items():
+            assert permits.PANE_URL[name].startswith("x-apple.systempreferences:")
+            assert permits.PANE_URL[name].endswith(anchor)
+            assert permits.FACE[name]
+
+
 class TestRequests:
     def test_an_unknown_permission_is_a_programming_error(self) -> None:
         with pytest.raises(ValueError, match="unknown permission"):
             permits.request("full_disk_access")
+        with pytest.raises(ValueError, match="unknown permission"):
+            permits.open_pane("full_disk_access")
 
 
 # `blame()` and `status()` are deliberately not unit tested: they call into
