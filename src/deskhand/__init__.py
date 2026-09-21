@@ -8,6 +8,7 @@ from .errors import BadChoice, CannotDo, DeskhandError, NoPermission, StaleTarge
 from .fingerprint import Fingerprint
 from .fusion import Fusion, fuse
 from .protocols import Decider, HitTester, Sensor, Source, Verifier
+from .rehearse import Finding, Rehearsal, rehearse
 from .runner import Runner
 from .types import (
     ANYWHERE,
@@ -42,6 +43,7 @@ __all__ = [
     "Choice",
     "Decider",
     "DeskhandError",
+    "Finding",
     "Fingerprint",
     "Fusion",
     "HitTester",
@@ -49,6 +51,7 @@ __all__ = [
     "NoPermission",
     "NoVerifier",
     "PredicateVerifier",
+    "Rehearsal",
     "Report",
     "Runner",
     "Sensor",
@@ -64,4 +67,5 @@ __all__ = [
     "View",
     "build_action",
     "fuse",
+    "rehearse",
 ]

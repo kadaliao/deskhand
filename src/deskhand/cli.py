@@ -17,6 +17,7 @@ from typing import Any
 from . import demo, json_io
 from .deciders.scripted import ScriptedDecider
 from .errors import DeskhandError
+from .rehearse import Rehearsal, rehearse
 from .runner import Runner
 from .types import Report, Status, Step
 from .verify import PredicateVerifier
@@ -49,6 +50,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--json", action="store_true")
     run.add_argument("--no-pixels", action="store_true")
     run.add_argument(
+        "--focus",
+        default=None,
+        help="bring this running application to the front before observing",
+    )
+    run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="observe once and report what each step would do, without doing anything",
+    )
+    run.add_argument(
         "--trust-decider",
         action="store_true",
         help="accept the decider's own DONE claim without a verifier (unsafe)",
@@ -70,8 +81,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _output_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--focus", default=None, help="bring this running application to the front first"
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--limit", type=int, default=25, help="how many targets to print")
+    parser.add_argument(
+        "--grep", default=None, help="only targets whose name or kind contains this text"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -102,18 +119,23 @@ def _mac_source(no_pixels: bool = False) -> Any:
 def _ax(args: argparse.Namespace) -> int:
     from .sensors.macos.ax import AXSource
 
+    _focus(args)
+
     source = AXSource()
     started = time.perf_counter()
     targets = source.targets()
     elapsed = round((time.perf_counter() - started) * 1000)
     frame = source.frame
+    shown = _grep(targets, args.grep)
     if args.json:
         print(
             json_io.dump(
                 {
                     "ms": elapsed,
                     "frame": _frame_brief(frame),
-                    "targets": [t.brief() for t in targets],
+                    "shown": len(shown),
+                    "total": len(targets),
+                    "targets": [t.brief() for t in shown],
                 }
             )
         )
@@ -121,11 +143,12 @@ def _ax(args: argparse.Namespace) -> int:
     app = frame.app if frame else "?"
     window = frame.title if frame else "?"
     print(f"app={app} window={window} targets={len(targets)} ms={elapsed}")
-    _print_targets(targets, args.limit)
+    _print_targets(shown, args.limit)
     return OK
 
 
 def _probe(args: argparse.Namespace) -> int:
+    _focus(args)
     sensor = _mac_source(no_pixels=args.no_pixels)
     views = []
     for _ in range(max(1, args.frames)):
@@ -133,12 +156,15 @@ def _probe(args: argparse.Namespace) -> int:
         view = sensor.observe()
         views.append((round((time.perf_counter() - started) * 1000), view))
     last = views[-1][1]
+    shown = _grep(last.targets, args.grep)
     if args.json:
         print(
             json_io.dump(
                 {
                     "ms": [ms for ms, _ in views],
                     "notes": dict(last.notes),
+                    "shown": len(shown),
+                    "total": len(last.targets),
                     "view": last.brief(),
                 }
             )
@@ -147,7 +173,7 @@ def _probe(args: argparse.Namespace) -> int:
     for ms, view in views:
         print(f"observe ms={ms} app={view.app} window={view.window}")
     print(f"notes: {dict(last.notes)}")
-    _print_targets(last.targets, args.limit)
+    _print_targets(shown, args.limit)
     return OK
 
 
@@ -183,7 +209,7 @@ def _doctor(args: argparse.Namespace) -> int:
         "window": source.frame.title if source.frame else None,
         "targets": len(targets),
         "ms": round((time.perf_counter() - started) * 1000),
-        "click_only": sum(1 for t in targets if t.note == "click-only"),
+        "click_only": sum(1 for t in targets if "click-only" in t.note),
         "verbs": sorted({str(v) for t in targets for v in t.actions}),
         "nudge_attributes": [
             a
@@ -235,11 +261,25 @@ def _verdict(report: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
+def _focus(args: argparse.Namespace) -> None:
+    """Bring the named application forward, if one was named."""
+    name = getattr(args, "focus", None)
+    if not name:
+        return
+    from .sensors.macos.apps import activate, frontmost
+
+    activated = activate(name)
+    time.sleep(0.4)  # give the window server a moment to make it frontmost
+    current = frontmost()
+    print(f"focused: {activated} (frontmost is now {current[0] if current else '?'})")
+
+
 def _run(args: argparse.Namespace) -> int:
     task, choices = json_io.load_task(args.task)
     if not choices:
         print("task file has no 'steps' script; nothing to run", file=sys.stderr)
         return ENVIRONMENT
+    _focus(args)
     sensor = _mac_source(no_pixels=args.no_pixels)
     verifier = None
     if args.trust_decider:
@@ -247,6 +287,15 @@ def _run(args: argparse.Namespace) -> int:
             "--trust-decider: DONE is accepted without independent verification", stacklevel=1
         )
         verifier = PredicateVerifier(dict.fromkeys(task.checks, _always))
+    if args.dry_run:
+        view = sensor.observe()
+        rehearsal = rehearse(task, choices, view, verifier=verifier)
+        if args.json:
+            print(json_io.dump(rehearsal.brief()))
+        else:
+            _print_rehearsal(rehearsal)
+        return FAILED if rehearsal.first_blocked else OK
+
     runner = Runner(sensor=sensor, decider=ScriptedDecider(choices), verifier=verifier)
     report = runner.run(task)
     _print_report(report, json_output=args.json)
@@ -260,6 +309,13 @@ def _always(task: Any, view: Any) -> bool:  # noqa: ARG001
 # --------------------------------------------------------------------------- #
 # printing
 # --------------------------------------------------------------------------- #
+
+
+def _grep(targets: Sequence[Any], needle: str | None) -> list[Any]:
+    if not needle:
+        return list(targets)
+    wanted = needle.casefold()
+    return [t for t in targets if wanted in f"{t.label} {t.kind} {t.spoken()}".casefold()]
 
 
 def _frame_brief(frame: Any) -> dict[str, Any] | None:
@@ -288,6 +344,15 @@ def _print_targets(targets: Sequence[Any], limit: int) -> None:
         print(f"{target.id:<16}{target.kind:<26}{verbs:<34}{target.label}{mark}")
     if len(targets) > limit:
         print(f"... {len(targets) - limit} more")
+
+
+def _print_rehearsal(rehearsal: Rehearsal) -> None:
+    print("rehearsal against the current view -- nothing was executed")
+    print(f"view: app={rehearsal.app} window={rehearsal.window!r}")
+    for finding in rehearsal.findings:
+        mark = "ok  " if finding.ok else "FAIL"
+        print(f"{finding.n:>3} {mark} {finding.what:<28} {finding.detail}")
+    print(f"\nverdict: {rehearsal.verdict}")
 
 
 def _print_report(report: Report, *, json_output: bool) -> None:

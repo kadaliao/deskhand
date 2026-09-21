@@ -36,6 +36,15 @@ class PredicateVerifier:
     def __init__(self, checks: Mapping[str, Check]) -> None:
         self._checks = dict(checks)
 
+    def covers(self, claim: str) -> bool:
+        """Whether a predicate exists for this criterion.
+
+        Used by a rehearsal to catch the most common configuration mistake: a
+        claim whose wording does not match any registered check key, which would
+        silently escalate instead of finishing.
+        """
+        return claim in self._checks
+
     def confirm(self, *, task: Task, view: View, claims: Sequence[str]) -> tuple[CheckResult, ...]:
         results: list[CheckResult] = []
         for claim in claims:

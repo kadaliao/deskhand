@@ -25,59 +25,73 @@ budget exhaustion, a cancel, and a `DONE` claim that must be refused.
 
 ---
 
-## M1 — accessibility only, on a real native app · written
+## M1 — a real application, and the measurement that changed this milestone · written
 
-Goal: prove the semantic path works end to end before pixels are allowed to
-carry anything.
+Original goal: prove the semantic path on System Settings with pixels disabled.
+**A real machine disproved that goal**, and the measurement is more useful than
+the goal was.
 
-Target scenario: System Settings → switch Appearance to Dark (or Light).
+### What was measured
 
-```bash
-python -m deskhand doctor --json          # record the baseline
-python -m deskhand ax --limit 40          # what accessibility sees
-python -m deskhand probe --no-pixels      # the fused view, pixels disabled
-python -m deskhand run --task examples/appearance.json --trust-decider
-```
-
-Acceptance:
-- `doctor` reports `accessibility: granted` and a non-zero target count for the app.
-- The task completes in **≤ 3 steps** (open the pane, click the choice, done).
-- **Every executed step's route is `ax-press`** — no `click`, no `keys`.
-- Per-step `ms.total` under **300 ms** on this machine, with the breakdown visible
-  in the trace.
-- Running with `--no-pixels` changes nothing, which is the point.
-
-Needs from the user:
-1. Grant **Accessibility** to the terminal in System Settings → Privacy &
-   Security → Accessibility.
-2. Leave the target app frontmost when running (the sensor follows the frontmost
-   application by design).
-
-### Measured so far, on a real machine
-
-Perception, identity, geometry and freshness are verified against real
-applications. Actual task execution has **not** been run yet, because that takes
-control of the machine.
+`deskhand ax --focus 系统设置` on a **Chinese** macOS, and `--focus ChatGPT` /
+`--focus Ghostty` for comparison:
 
 | Measurement | Value |
 |---|---|
-| Native app (Ghostty, 22 element tree) | 22 targets in **298–436 ms** |
-| Chromium app (ChatGPT, 1920×956 window) | **38 nodes**, of which only **8** implement `AXPress`; **35** have geometry; **38 unique ids** |
-| After the interactivity gate | 20 targets, **15 aimable**, 6 click-only |
+| Native app (Ghostty) | 22 targets in **298–436 ms** |
+| Chromium app (ChatGPT) | **38 nodes**, only **8** implement `AXPress`, 35 have geometry, 38 unique ids |
+| System Settings, Chinese | **112–113 targets**; 39 sidebar rows; **0 of them have a label**; 25 names came from `AXIdentifier`; 76 are click-only |
 | Accessibility calls per node | **2** (one batched read, one action-name read); 4 single reads for a 38 node tree. The unbatched shape was ~13 per node |
-| Screen Recording | not granted, so the pixel path is **unverified** |
+| Screen Recording | not granted, so the pixel path is unverified |
 
-Three bugs came out of this that review and fake-desktop tests both missed, and
-each is now pinned by a regression test:
-`AXValueGetType` answers `0` for anything that is not an `AXValue` (so a naive
-unwrap deleted every element reference and child array), an unsupported attribute
-arrives as an `AXValue` wrapping an error code rather than null (so it became an
-element's subrole and got hashed into its identity), and `AXPosition` is an
-`AXValueRef` with no `.x` attribute (so every rectangle was silently lost).
+The sidebar finding is structural, not a quirk: each of the 39 rows has geometry
+(198×32, stacked), one child, and that child is an unnamed `AXCell`. On a
+localised macOS the names of those rows exist **only as pixels**. Where names do
+exist they are internal identifiers — `微信_Title`,
+`com.apple.systempreferences.AppleIDSettings*AppleIDSettings` — which is why such
+a name is now flagged `from-identifier` instead of being passed off as a label.
 
-Blocks: nothing. This is the gate for everything else.
+### Revised acceptance
 
----
+The task is still "switch Appearance to Dark", because it is a good task. What
+changed is what it has to prove:
+
+- The settings sidebar row for the pane is addressable **because pixels named
+  it**: a `row:outlinerow` target whose extra names came from recognised text at
+  its own geometry. `doctor` must show `fusion.absorbed > 0`.
+- The actual setting change is **semantic**: the Light/Dark control is a labelled
+  radio button pressed with `ax-press`, not a coordinate click.
+- Coordinate clicks are allowed for the row itself, and the count is reported —
+  the point is that they are counted, not that they are zero.
+- 3 steps or fewer, per-step `ms.total` reported.
+
+Needs from the user:
+1. **Accessibility** — already granted on this machine.
+2. **Screen Recording** — now required for M1, because of the finding above.
+   System Settings → Privacy & Security → Screen Recording.
+3. The target application frontmost, or `--focus <name>`.
+
+Before running anything, rehearse it. This is what caught the localisation
+problem, and it clicks nothing:
+
+```bash
+uv run deskhand run --task examples/appearance.zh-CN.json --dry-run --focus 系统设置
+```
+
+### Three bugs the real machine found
+
+All fixed, all pinned by regression tests, all invisible to review and to
+fake-desktop tests:
+
+1. `AXValueGetType` answers `0` for anything that is not an `AXValue` — including
+   element references and child arrays. Reading that as "an AXValue of kind 0"
+   deleted every element and every child list, and perception returned an empty
+   desktop.
+2. An unsupported attribute arrives as an `AXValue` wrapping an error code, not
+   as null, so it became the string `<AXValue ... {value = error:-25212 ...}>` in
+   an element's subrole and inside its identity hash.
+3. `AXPosition` is an `AXValueRef` with no `.x` attribute, so the obvious
+   `value.x` raised and every rectangle in the tree was silently lost.
 
 ## M2 — Electron, where accessibility has to be asked · written
 
@@ -113,6 +127,10 @@ Chromium, accessibility supplies identity and geometry, and the pixels still
 supply most of the meaning. `AXScrollToVisible` is available on almost every
 element and is worth modelling as a verb before clicking something scrolled out
 of view.
+
+The label lesson from M1 applies here too: names that arrive from
+`AXIdentifier` are flagged `from-identifier`, so nothing downstream treats an
+internal id as a name a person would recognise.
 
 ---
 

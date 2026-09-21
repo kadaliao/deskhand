@@ -245,6 +245,6 @@ def measure_ax_first() -> dict[str, Any]:  # pragma: no cover - diagnostic helpe
     return {
         "targets": semantic,
         "ms": round((time.perf_counter() - started) * 1000),
-        "click_only": sum(1 for t in targets if t.note == "click-only"),
+        "click_only": sum(1 for t in targets if "click-only" in t.note),
         "verbs": sorted({str(v) for t in targets for v in t.actions if v is not Verb.WAIT}),
     }

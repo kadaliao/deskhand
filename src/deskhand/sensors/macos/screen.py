@@ -100,7 +100,7 @@ class MacSensor:
                 "pixels": len(visual),
                 "pixels_used": used_pixels,
                 "fusion": fused.notes,
-                "click_only": sum(1 for t in targets if t.note == "click-only"),
+                "click_only": sum(1 for t in targets if "click-only" in t.note),
             },
             at_ms=round(time.time() * 1000),
         )

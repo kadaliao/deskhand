@@ -5,10 +5,34 @@ loop survives failures instead of ending on them.
 
 ```bash
 uv sync --extra macos
+uv run deskhand demo        # the whole loop, no permissions needed
 uv run deskhand doctor      # what can accessibility actually see right now?
 uv run deskhand probe       # the fused view, as the decider sees it
-uv run deskhand demo        # the whole loop, no permissions needed
+uv run deskhand ax --grep 外观 --focus 系统设置   # find the right label
 ```
+
+Rehearse before you let it touch anything. `--dry-run` observes once and reports
+what every step would do, pressing nothing:
+
+```bash
+uv run deskhand run --task examples/appearance.zh-CN.json --dry-run --focus 系统设置
+```
+
+```
+rehearsal against the current view -- nothing was executed
+view: app=系统设置 window='录屏与系统录音'
+  1 FAIL PRESS 外观      no target matching '外观' in the current view
+  2 FAIL PRESS 深色      no target matching '深色' ... (not in the current view; an earlier step may reveal it)
+  3 FAIL DONE           claims [...], but no verifier is configured: this would escalate rather than finish
+
+verdict: step 1 cannot run as written: no target matching '外观' in the current view
+```
+
+That output is a real result from a real machine, and it is why this project
+keeps pixels around: on a localised macOS the settings sidebar has 39 rows that
+accessibility exposes with **no names at all**. Labels also differ per macOS
+version and language, so a script written against a guess fails at the first
+step instead of halfway through a click sequence.
 
 A caller hands over a bounded task; deskhand does the looking, aiming, clicking and checking.
 

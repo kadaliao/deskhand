@@ -374,7 +374,7 @@ class AXSource:
             return None
 
         subrole = str(details.get("AXSubrole") or "")
-        label = _label(details)
+        label, provenance = _label(details)
         value = _coerce(details.get("AXValue"))
         box = _box(details.get("AXPosition"), details.get("AXSize"))
 
@@ -412,11 +412,14 @@ class AXSource:
         if not caps and not named and box is None:
             return None  # anonymous container; children are walked regardless
 
-        note = ""
+        flags: list[str] = []
+        if provenance:
+            flags.append(provenance)
         if Verb.PRESS in caps and "AXPress" not in actions:
-            note = "click-only"
+            flags.append("click-only")
         elif not caps:
-            note = "not-aimable"
+            flags.append("not-aimable")
+        note = ",".join(flags)
 
         target_id = _identify(role, subrole, label, box, path)
         return Target(
@@ -536,14 +539,27 @@ def _iter(children: Any) -> list[Any]:
         return []
 
 
-def _label(details: dict[str, Any]) -> str:
-    for key in ("AXTitle", "AXDescription", "AXHelp", "AXIdentifier"):
+def _label(details: dict[str, Any]) -> tuple[str, str]:
+    """The best name for an element, and where it came from.
+
+    ``AXIdentifier`` is the last resort and it is not a display name: on a
+    localised macOS, settings pane text comes back as things like
+    ``微信_Title`` or ``com.apple.systempreferences.AppleIDSettings*AppleIDSettings``.
+    It is still the only handle such an element has, so it is used -- but it is
+    flagged, so nothing downstream mistakes it for a name a person would read.
+    """
+    for key in ("AXTitle", "AXDescription", "AXHelp"):
         raw = details.get(key)
         if raw:
             text = " ".join(str(raw).split())
             if text:
-                return text[:MAX_LABEL_CHARS]
-    return ""
+                return text[:MAX_LABEL_CHARS], ""
+    raw = details.get("AXIdentifier")
+    if raw:
+        text = " ".join(str(raw).split())
+        if text:
+            return text[:MAX_LABEL_CHARS], "from-identifier"
+    return "", ""
 
 
 def _coerce(value: Any) -> str | int | float | bool | None:
