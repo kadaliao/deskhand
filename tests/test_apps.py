@@ -7,6 +7,7 @@ one of those, so the filter and the ordering are worth pinning.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -141,6 +142,95 @@ class TestActivate:
     def test_a_successful_activation_is_recorded(self, machine: list[FakeApp]) -> None:
         assert appsmod.activate("Finder") == "Finder"
         assert any(app.activated for app in machine)
+
+
+class TestFocus:
+    """``activate`` reporting success is not the same as the application being in front.
+
+    Measured, not hypothetical: a benchmark run asked for a browser, was told the
+    activation succeeded, and then timed the terminal that was still in front. The
+    number was plausible and about the wrong application.
+    """
+
+    def _patch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        front: list[str],
+        resolves: str | None = None,
+        activate_side_effect: Callable[[str], None] | None = None,
+    ) -> list[str]:
+        calls: list[str] = []
+
+        def fake_frontmost() -> tuple[str, int]:
+            return (front[-1], 1)
+
+        def fake_activate(name: str) -> str:
+            calls.append(name)
+            if activate_side_effect is not None:
+                activate_side_effect(name)
+            return resolves or name
+
+        monkeypatch.setattr(appsmod, "frontmost", fake_frontmost)
+        monkeypatch.setattr(appsmod, "activate", fake_activate)
+        return calls
+
+    def test_already_frontmost_does_not_activate_anything(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._patch(monkeypatch, front=["Ghostty"])
+        assert appsmod.focus("Ghostty") == "Ghostty"
+        assert calls == []
+
+    def test_it_returns_once_the_application_is_in_front(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        front = ["Ghostty"]
+
+        def move(name: str) -> None:
+            del name
+            front[-1] = "Google Chrome"
+
+        calls = self._patch(monkeypatch, front=front, activate_side_effect=move)
+        assert appsmod.focus("Google Chrome") == "Google Chrome"
+        assert calls == ["Google Chrome"]
+
+    def test_a_silent_failure_raises_instead_of_measuring_the_wrong_application(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._patch(monkeypatch, front=["Ghostty"])
+        with pytest.raises(CannotDo) as caught:
+            appsmod.focus("Google Chrome", attempts=2, wake=lambda _: None)
+        assert "did not become frontmost" in str(caught.value)
+        assert "Ghostty" in str(caught.value)
+        assert "wrong application" in str(caught.value)
+        assert calls == ["Google Chrome", "Google Chrome"]  # it did retry
+
+    def test_the_resolved_name_is_what_is_compared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # "Settings" resolves to "System Settings"; the comparison must use the
+        # resolved name, because that is what ends up in front.
+        front = ["Finder"]
+
+        def move(name: str) -> None:
+            del name
+            front[-1] = "System Settings"
+
+        self._patch(monkeypatch, front=front, resolves="System Settings", activate_side_effect=move)
+        assert appsmod.focus("Settings", wake=lambda _: None) == "System Settings"
+
+    def test_an_empty_name_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._patch(monkeypatch, front=["Ghostty"])
+        with pytest.raises(CannotDo, match="empty"):
+            appsmod.focus("   ")
+
+    def test_no_frontmost_application_at_all_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(appsmod, "frontmost", lambda: None)
+        monkeypatch.setattr(appsmod, "activate", lambda name: name)
+        with pytest.raises(CannotDo) as caught:
+            appsmod.focus("Ghostty", attempts=1, wake=lambda _: None)
+        assert "unknown" in str(caught.value)
 
 
 def test_no_frontmost_application_is_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:

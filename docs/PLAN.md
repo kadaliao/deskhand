@@ -155,11 +155,19 @@ frontmost application before acting and aborts when it is not the intended one.
 ## M2 — Electron, where accessibility has to be asked · written, premise in doubt
 
 **Read the Chromium finding in `docs/BENCHMARKS.md` before trusting the acceptance
-criteria below.** Consecutive observations of one Chrome window returned 158, 520,
-158, 519 and 158 elements, and the reason is not established. Id-addressed targets
-can therefore disappear between deciding and acting. "Zero coordinate clicks" was
-written before that was measured, and may need to become "every coordinate click is
-counted and explained".
+criteria below.** Five consecutive observations of one Chrome window returned 158,
+520, 158, 519 and 158 elements. Those were taken while a colleague was using that
+browser and while the tooling was repeatedly taking focus from it, and a later
+control run showed that a Chromium window nobody is using is perfectly steady (20
+targets, one shape, 17 ms, eight frames). So the variation is most likely a live
+page under somebody's hands, and it is **not established as a property of
+Chromium**.
+
+The consequence is narrower than it first looked, and still real: on a page that is
+changing, id-addressed targets can disappear between deciding and acting, and
+settling will hit its frame cap. "Zero coordinate clicks" was written before any of
+this was measured, and should become "every coordinate click is counted and
+explained" — a criterion that survives a page moving under the agent.
 
 Goal: turn the reference project's pixel-heavy Spotify example into a mostly
 semantic one.

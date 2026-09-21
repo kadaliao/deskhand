@@ -9,6 +9,8 @@ uv run deskhand demo        # the whole loop, no permissions needed
 uv run deskhand doctor      # what can accessibility actually see right now?
 uv run deskhand probe       # the fused view, as the decider sees it
 uv run deskhand ax --grep 外观 --focus 系统设置   # find the right label
+uv run deskhand stability --frames 10        # is this window steady, or is somebody using it?
+uv run deskhand bench                        # what does an observation actually cost?
 ```
 
 Rehearse before you let it touch anything. `--dry-run` observes once and reports

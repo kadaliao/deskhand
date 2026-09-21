@@ -71,19 +71,52 @@ Three changes did that:
 
 | phase | Ghostty (native) | Chrome (Chromium) |
 |---|---|---|
-| observe, warm | 9 ms | 24 ms at 75 targets, 44–53 ms at 404–509 targets |
+| observe, warm | 9 ms | 24 ms at 75 targets, 44-53 ms at 404-509 targets (uncontrolled; spikes to 183 ms) |
 | act (semantic `ax-press`) | 17 ms | not measured |
-| settle, quiet | 19 ms | 68–670 ms, volatile page |
-| **step, quiet interface** | **≈ 45 ms** | **≈ 90 ms** |
-| observe, first request to that application | 315–326 ms | 337–356 ms |
+| settle, quiet | 19 ms | 68-670 ms, volatile page (uncontrolled) |
+| **step, quiet interface** | **≈ 45 ms** | **≈ 90 ms** (uncontrolled) |
+| observe, first request to that application | 315-326 ms | 337-356 ms |
+
+The Ghostty column was measured back-to-back on a stable window and is the one to
+trust. The Chrome column was taken while a person was using that browser, so its
+spread is the page's activity as much as the tooling's cost.
 
 `docs/PLAN.md` asked for under 200 ms per step; a quiet interface meets it with
 room, and the first observation of an application does not and cannot.
 
-## A finding that is not a number: Chromium's tree is not the same twice
+## Method, and the confound that was found late
 
-Five consecutive observations of **the same Chrome window**, same process, same
-page, no interaction in between:
+**The machine was in active use by a person while most of this was measured.** They
+were operating the browser — navigating between pages, switching tabs — at the same
+time as the Chrome observations below. On top of that, the tooling itself called
+`activate` on the application under test at the start of every run, every time,
+whether or not it was already in front.
+
+So for the Chrome numbers: the application, the page and the window were changing
+under someone else's hands and under the tooling's own focus changes. The Ghostty
+numbers were taken as tight back-to-back loops against a 13-element native window,
+and a browser in another window cannot affect an accessibility walk of that tree.
+They stand. The Chrome numbers are `uncontrolled` and are labelled that way below.
+
+Two defects came out of noticing this, both fixed:
+
+- **`--focus` could fail silently.** A benchmark run asked for the browser, was told
+  the activation had succeeded, and then timed the terminal that was still in front —
+  because `activate` reporting success is not the same as the application being in
+  front. `--focus` now verifies, retries, and raises rather than measuring the wrong
+  application. It also does nothing at all when the application is already frontmost,
+  and says whose window it took focus from when it is not.
+- **The benchmark could not tell it was disturbed.** It now reports the window title
+  and the target count per frame, and prints a warning when either changed during the
+  run. That would have caught this in one run instead of several.
+
+A measurement of an interface that a person is using is a measurement of two things
+at once, and this file did not say so. It does now.
+
+## A finding that is not a number: one live page is not the same twice
+
+Five consecutive observations of the same Chrome window, same process, same page
+**while a person was using it and the tooling was fighting it for focus**:
 
 ```
 targets = 158, 520, 158, 519, 158
@@ -96,25 +129,59 @@ eight rapid observations, no gap :  65, 65, 65, 65, 65, 65, 65, 65
 eight observations, one second apart: 65, 65, 65, 65, 65, 65, 106, 156
 ```
 
-**What this establishes:** for a Chromium application, the number and identity of
-accessibility elements exposed for one window varies by up to 8x between
-consecutive observations, and the variation depends on timing.
+**What this establishes:** for *this* page, in *this* environment — a live page
+(`runscript_content` in its URL) being operated by a person while the tooling
+repeatedly took focus — the number of accessibility elements exposed for one window
+varied by up to 8x between consecutive observations, in a timing-dependent way.
 
-**What it does not establish:** *why*. Re-asserting `AXEnhancedUserInterface` on
-every observation produced `74, 65, 68, 131, 120, 105, 94, 94`, which is
-inconclusive — the measurement was confounded by the page itself changing. Lazy
-tree construction, pruning, and teardown after the last client goes away are all
-consistent with what was observed, and none of them has been demonstrated.
+**What it does not establish**, and an earlier revision of this file claimed it:
+that this is a property of Chromium in general, or of Electron applications, or
+even of this application on a quiet machine. Neither does it establish the
+mechanism: lazy tree construction, pruning, and teardown after the last client goes
+away are all consistent with what was seen, and re-asserting
+`AXEnhancedUserInterface` on every observation produced
+`74, 65, 68, 131, 120, 105, 94, 94`, which is inconclusive because the page was
+changing on its own throughout.
 
-**Why it matters:**
+**So the confound is now measured, not just admitted.** Two control runs were taken
+afterwards with the new `deskhand stability` command, which observes the frontmost
+window repeatedly, takes no focus of its own, and reports per frame what it saw:
 
-- Id-addressed targets can vanish between the decision and the action. The
-  freshness guard turns that into a retry rather than a wrong click, which is the
-  behaviour working as designed, but it costs steps.
-- Settling on such a window will usually hit the frame cap, so those steps cost
-  0.5–0.7 s and carry `settled: false`.
-- It puts a question mark on M2's "zero coordinate clicks on Spotify", which was
-  written before this was measured.
+```
+Ghostty, 9 frames, one second apart:
+  same window, same shape, 13 targets, 7-15ms each
+  frame 10: window changed to a different tab -> 14 targets, different shape
+
+ChatGPT (Chromium), 8 frames, one second apart, nobody touching it:
+  same window, same shape, 20 targets, 17ms each
+  verdict: nothing was disturbing this measurement
+```
+
+The first of those is the point: **one tab switch, by a person, moved the target
+count and the shape of a native application in the middle of a five-frame run.**
+The second is the other half: a Chromium window that nobody is using is perfectly
+steady, and its warm observation costs 17 ms across eight consecutive frames.
+
+That does not prove the earlier 158/520 alternation was the colleague rather than
+Chromium — the two were entangled at the time and stay entangled now — but it moves
+the balance a long way towards "a live page being used", which is also what the
+differing window titles across those runs suggested.
+
+**To establish it properly** you would need a static page (`about:blank` or an
+already-loaded document), nobody touching the machine, no `--focus` churn, a
+non-Chromium application measured the same way as a control, and the title and count
+recorded per frame — which `deskhand stability` now does.
+
+**Why it still matters, at the smaller size the evidence supports:**
+
+- Id-addressed targets can vanish between the decision and the action on a page that
+  is changing. The freshness guard turns that into a retry rather than a wrong click,
+  which is the behaviour working as designed, but it costs steps.
+- Settling on such a window hits the frame cap, so those steps cost 0.5-0.7 s and
+  carry `settled: false`.
+- M2's "zero coordinate clicks on Spotify" remains **unverified**, not refuted. It was
+  written before any of this was measured, and it should be re-written as "every
+  coordinate click is counted and explained".
 
 ## Not measured
 

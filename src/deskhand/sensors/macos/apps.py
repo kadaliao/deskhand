@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
+from collections.abc import Callable
 from typing import Any
 
 from ...errors import CannotDo
@@ -118,6 +120,42 @@ def ancestors() -> list[tuple[int, str]]:
         if pid <= 1:
             break
     return chain
+
+
+def focus(
+    name: str,
+    *,
+    attempts: int = 3,
+    wait_s: float = 0.4,
+    wake: Callable[[float], None] = time.sleep,
+) -> str:
+    """Make ``name`` frontmost, or raise.
+
+    ``activate`` can appear to succeed while the frontmost application does not
+    change: another window may hold focus, or the window server may not honour the
+    request. Treating that as success and then measuring whatever happens to be in
+    front produces numbers about the wrong application, silently. So this checks,
+    retries, and then refuses with what it actually found.
+
+    Measured, not hypothetical: a benchmark run asked for a browser, was told the
+    activation succeeded, and then timed the terminal that was still in front.
+    """
+    if not name.strip():
+        raise CannotDo("the application name is empty")
+    wanted = name
+    for _ in range(max(1, attempts)):
+        current = frontmost()
+        if current and current[0] == wanted:
+            return current[0]
+        wanted = activate(name)
+        wake(wait_s)
+    current = frontmost()
+    if current and current[0] == wanted:
+        return current[0]
+    raise CannotDo(
+        f"{wanted!r} did not become frontmost; it is {current[0] if current else 'unknown'}. "
+        f"Anything measured now would be about the wrong application."
+    )
 
 
 def activate(name: str) -> str:

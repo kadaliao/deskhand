@@ -20,7 +20,7 @@ from .deciders.scripted import ScriptedDecider
 from .errors import DeskhandError
 from .rehearse import Rehearsal, rehearse
 from .runner import Runner
-from .types import Report, Status, Step
+from .types import Report, Status, Step, shape_digest
 from .verify import PredicateVerifier
 
 OK, FAILED, ENVIRONMENT = 0, 1, 2
@@ -45,6 +45,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     doctor = sub.add_parser("doctor", help="permissions, coverage and timing for the frontmost app")
     doctor.add_argument("--json", action="store_true")
+
+    stability = sub.add_parser(
+        "stability",
+        help="observe the frontmost window repeatedly and say whether it was steady",
+    )
+    stability.add_argument("--frames", type=int, default=10)
+    stability.add_argument("--gap", type=float, default=1.0, help="seconds between observations")
+    stability.add_argument(
+        "--focus", default=None, help="bring this application to the front first"
+    )
+    stability.add_argument("--no-pixels", action="store_true")
+    stability.add_argument("--json", action="store_true")
 
     bench = sub.add_parser("bench", help="measure what an observation and a settle actually cost")
     bench.add_argument(
@@ -94,6 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "doctor": _doctor,
         "permit": _permit,
         "bench": _bench,
+        "stability": _stability,
         "run": _run,
     }
     try:
@@ -136,6 +149,48 @@ def _permit(args: argparse.Namespace) -> int:
     return OK if not outstanding else ENVIRONMENT
 
 
+def _stability(args: argparse.Namespace) -> int:
+    """Measure the interface, and whether somebody else was measuring it too.
+
+    Takes no focus of its own unless asked: the point of the command is to find out
+    whether the window is being disturbed, and stealing focus would disturb it.
+    """
+    from .stability import Sample, Stability
+
+    _focus(args)
+    sensor = _mac_source(no_pixels=args.no_pixels)
+    samples: list[Sample] = []
+    for index in range(max(1, args.frames)):
+        started = time.perf_counter()
+        view = sensor.observe()
+        samples.append(
+            Sample(
+                ms=round((time.perf_counter() - started) * 1000),
+                targets=len(view.targets),
+                shape=shape_digest(view.targets)[:8],
+                window=view.window,
+            )
+        )
+        if index + 1 < args.frames:
+            time.sleep(max(0.0, args.gap))
+
+    report = Stability(tuple(samples))
+    if args.json:
+        print(json_io.dump(report.brief()))
+        return OK
+
+    print(f"{'#':>3} {'ms':>6} {'targets':>8} {'shape':>9}  window")
+    for index, sample in enumerate(samples, start=1):
+        window = sample.window[:44]
+        print(f"{index:>3} {sample.ms:>6} {sample.targets:>8} {sample.shape:>9}  {window!r}")
+    brief = report.brief()
+    targets = brief["targets"]
+    print(f"\ntargets   : min={targets['min']} max={targets['max']} median={targets['median']}")
+    print(f"first={brief['first_ms']}ms  warm median={brief['warm_median_ms']}ms")
+    print(f"\nverdict: {report.verdict}")
+    return OK if report.kind != "disturbed" else FAILED
+
+
 def _bench(args: argparse.Namespace) -> int:
     """Time the parts of a step. Nothing here acts on anything.
 
@@ -149,11 +204,15 @@ def _bench(args: argparse.Namespace) -> int:
     sensor = _mac_source(no_pixels=args.no_pixels)
 
     observes: list[int] = []
+    counts: list[int] = []
+    titles: list[str] = []
     targets = 0
     for _ in range(max(1, args.frames)):
         started = time.perf_counter()
         view = sensor.observe()
         observes.append(round((time.perf_counter() - started) * 1000))
+        counts.append(len(view.targets))
+        titles.append(view.window)
         targets = len(view.targets)
 
     probes: list[int] = []
@@ -176,6 +235,8 @@ def _bench(args: argparse.Namespace) -> int:
         "targets": targets,
         "observe_first_ms": observes[0],
         "observe_warm_ms": observe_warm,
+        "targets_per_frame": counts,
+        "distinct_windows": sorted(set(titles)),
         "probe_ms": round(statistics.median(probes), 1),
         "settle_quiet_ms": round(statistics.median(settles), 1),
         "samples": {"observe": observes, "probe": probes, "settle": settles},
@@ -190,6 +251,13 @@ def _bench(args: argparse.Namespace) -> int:
     print(f"probe,   warm median : {report['probe_ms']:>6}ms")
     print(f"settle, quiet desktop: {report['settle_quiet_ms']:>6}ms   (samples {settles})")
     print(f"\nsteady-state step floor: {observe_warm + report['settle_quiet_ms']}ms + act")
+    if len(set(titles)) > 1:
+        print(
+            f"note: the window changed {len(set(titles))} times during this run, so these"
+            " numbers include whatever was happening to it"
+        )
+    if len(set(counts)) > 1:
+        print(f"note: target count varied {min(counts)}..{max(counts)} across frames")
     return OK
 
 
@@ -375,16 +443,22 @@ def _verdict(report: dict[str, Any]) -> str:
 
 
 def _focus(args: argparse.Namespace) -> None:
-    """Bring the named application forward, if one was named."""
+    """Bring the named application forward, if one was named and is not already.
+
+    Taking focus is a side effect on the person using the machine, so it is only
+    done when it is actually needed, and it says whose window it took it from.
+    """
     name = getattr(args, "focus", None)
     if not name:
         return
-    from .sensors.macos.apps import activate, frontmost
+    from .sensors.macos.apps import focus, frontmost
 
-    activated = activate(name)
-    time.sleep(0.4)  # give the window server a moment to make it frontmost
-    current = frontmost()
-    print(f"focused: {activated} (frontmost is now {current[0] if current else '?'})")
+    before = frontmost()
+    if before and before[0] == name:
+        print(f"already frontmost: {name} (pid {before[1]})")
+        return
+    activated = focus(name)
+    print(f"took focus: {activated} (was {before[0] if before else 'nothing'})")
 
 
 def _run(args: argparse.Namespace) -> int:
