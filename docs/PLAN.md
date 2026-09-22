@@ -277,16 +277,15 @@ Also from this run: `--focus` needed a retry, because Chrome (rather than the
 user) stole focus back on the first attempt. The verification script checks the
 frontmost application before acting and aborts when it is not the intended one.
 
-## M2 — Electron, where accessibility has to be asked · written, premise in doubt
+## M2 — Electron, where accessibility has to be asked · written, premise resolved, acceptance not run
 
-**Read the Chromium finding in `docs/BENCHMARKS.md` before trusting the acceptance
-criteria below.** Five consecutive observations of one Chrome window returned 158,
-520, 158, 519 and 158 elements. Those were taken while a colleague was using that
-browser and while the tooling was repeatedly taking focus from it, and a later
-control run showed that a Chromium window nobody is using is perfectly steady (20
-targets, one shape, 17 ms, eight frames). So the variation is most likely a live
-page under somebody's hands, and it is **not established as a property of
-Chromium**.
+**Read the Chromium finding in `docs/BENCHMARKS.md` first.** Five consecutive
+observations of one Chrome window returned 158, 520, 158, 519 and 158 elements, taken
+while a colleague was using that browser and while the tooling was repeatedly taking
+focus from it. Two later control runs, on two machines, found a Chromium window nobody
+is touching to be perfectly steady. So the variation was the live page under somebody's
+hands, and it is **not a property of Chromium**. The premise is settled; the acceptance
+below has still never been run end to end.
 
 The consequence is narrower than it first looked, and still real: on a page that is
 changing, id-addressed targets can disappear between deciding and acting, and
@@ -326,6 +325,12 @@ Chromium, accessibility supplies identity and geometry, and the pixels still
 supply most of the meaning. `AXScrollToVisible` is available on almost every
 element and is worth modelling as a verb before clicking something scrolled out
 of view.
+
+One more number, taken while the pixel layer was still language-blind and still
+worth keeping: of a real Chrome window's **179 targets, 135 (75%) had no name at
+all**. That is this milestone's premise as a single measurement, and it is also why
+`pixels="auto"` now asks how many targets are unnamed rather than how many there
+are — the old rule skipped the overlay on exactly that window.
 
 The label lesson from M1 applies here too: names that arrive from
 `AXIdentifier` are flagged `from-identifier`, so nothing downstream treats an
@@ -379,8 +384,19 @@ application per process.
 
 Still open in M3, in the order the measurements now justify them:
 
-1. **Region-scoped recognition** and **`ScreenCaptureKit`** — unchanged, and
-   unmeasurable here until Screen Recording is granted.
+1. **Region-scoped recognition** and **`ScreenCaptureKit`**. Screen Recording is granted
+   now, so this is measurable rather than pending, and measuring it changed the order of the
+   two. On a real window (a terminal full of text, `pixels="auto"`, accurate level):
+
+   | | ms |
+   |---|---|
+   | recognition pass alone | 540 |
+   | warm fused observation | 823-1045 |
+   | accessibility walk alone (cold, pays the lazy tree build once per process) | 319 |
+
+   `CGWindowListCreateImage` is deprecated but still present on this macOS, so
+   `ScreenCaptureKit` removes a future cliff. Region-scoped recognition removes a present
+   cost, and it is the one worth doing first.
 2. **Notification-driven waiting** (`AXObserver`). Much less valuable than it
    looked: polling a warm tree costs 5 ms, so event-driven settling would save
    single-digit milliseconds on a quiet interface. It is now justified by the
@@ -616,10 +632,20 @@ Things that must not regress, each pinned by a test:
 
 - **Multi-window applications.** The sensor follows the frontmost window. A
   window selector belongs on `Task`, not in the sensor.
-- **Multi-display.** Coordinates are global, so it should work, but the
-  visibility filter assumes one window frame. Needs a second display to check.
-- **Non-English interfaces.** Nothing in the pixel path assumes English any more.
-  The accessibility path never did. Worth an actual test on a Chinese interface.
+- **Multi-display.** *Checked, and the coordinates were not the problem.* With a second
+  display attached and the window sitting on it at `y=1113`, `AXPosition`/`AXSize` and
+  `CGWindowListCopyWindowInfo` reported the **identical** rectangle, and `CGDisplayBounds`
+  put the second display at `(0, 1080, 1728, 1117)` — so the window was exactly where it
+  claimed to be. The apparent "clicks do nothing on a second display" was a stale
+  frontmost reading plus a model wandering, and it cost most of a session to blame the
+  geometry. Still unverified: delivering a synthetic click to a window on a secondary
+  display, and the visibility filter's single-window-frame assumption with two frames on
+  screen.
+- **Non-English interfaces.** *Tested, and it failed.* The pixel path did assume English —
+  not through a keyword list, but because `_read` never told Vision which languages to
+  recognise, so on a `zh-Hans` macOS it read English and found **none** of the settings
+  sidebar. Fixed, and the numbers are in `docs/BENCHMARKS.md`. The accessibility path never
+  assumed English, and this is the first evidence of that rather than a claim about it.
 - **The `TYPE` fallback.** `ax-focus+keys` verifies focus before typing, but it
   is still a keystroke path. If a field is focused but a stray modifier is
   stuck, that is invisible. An `AXSelectedText`-based path would be stronger;
