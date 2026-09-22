@@ -377,6 +377,28 @@ class TestFocus:
             appsmod.focus("Ghostty", attempts=1, wake=lambda _: None)
         assert "unknown" in str(caught.value)
 
+    def test_the_refusal_survives_a_machine_without_appkit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CI runs this suite where pyobjc does not exist, and the message must not raise.
+
+        Found by CI, not locally. `responsible_app()` reaches for AppKit, so on a machine
+        without pyobjc the refusal raised `pyobjc AppKit is unavailable` and *replaced* the
+        explanation it was there to add -- every focus failure said the same useless thing.
+        """
+        self._patch(monkeypatch, front=["Ghostty"])
+
+        def no_appkit() -> object:
+            raise CannotDo("pyobjc AppKit is unavailable; install the macos extra")
+
+        monkeypatch.setattr(appsmod, "appkit", no_appkit)
+        with pytest.raises(CannotDo) as caught:
+            appsmod.focus("Google Chrome", attempts=1, wake=lambda _: None)
+        message = str(caught.value)
+        assert "did not become frontmost" in message
+        assert "no application at all" in message
+        assert "install the macos extra" not in message
+
 
 def test_no_frontmost_application_is_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(appsmod, "appkit", lambda: FakeAppKit([], None))

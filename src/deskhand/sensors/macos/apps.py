@@ -375,10 +375,20 @@ def focus(
 
 
 def _why_activation_cannot_work(wanted: str) -> str:
-    """The actionable half of a failed focus, and it depends on who was asking."""
-    owner = responsible_app()
+    """The actionable half of a failed focus, and it depends on who was asking.
+
+    Must never raise. It runs while building a refusal, and it asks about the process chain,
+    which means AppKit -- and CI runs this suite where pyobjc does not exist. It did raise
+    there: every focus failure was reported as "pyobjc AppKit is unavailable", replacing the
+    explanation it was supposed to add. Caught by CI, not locally.
+    """
+    try:
+        owner = responsible_app()
+        asked_from_front = owner is not None and _is_front(owner[0])
+    except Exception:  # no AppKit, or nothing to ask: the generic message is still true
+        owner, asked_from_front = None, False
     who = f"{owner[0]!r}" if owner else "no application at all"
-    if owner is not None and _is_front(owner[0]):
+    if asked_from_front:
         # The caller was active and it still did not come forward, so do not blame the
         # caller: the activation call itself does not work here.
         return (
