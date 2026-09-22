@@ -47,9 +47,9 @@ the goal was.
 The sidebar finding is structural, not a quirk: each of the 39 rows has geometry
 (198×32, stacked), one child, and that child is an unnamed `AXCell`. On a
 localised macOS the names of those rows exist **only as pixels**. Where names do
-exist they are internal identifiers — `微信_Title`,
-`com.apple.systempreferences.AppleIDSettings*AppleIDSettings` — which is why such
-a name is now flagged `from-identifier` instead of being passed off as a label.
+exist they are internal identifiers — an app pane identifier of the form
+`<reverse.dns.bundle>*<PaneName>`, or `<Something>_Title` — which is why such a name
+is now flagged `from-identifier` instead of being passed off as a label.
 
 ### Revised acceptance
 

@@ -637,10 +637,10 @@ def _label(details: dict[str, Any]) -> tuple[str, str]:
     """The best name for an element, and where it came from.
 
     ``AXIdentifier`` is the last resort and it is not a display name: on a
-    localised macOS, settings pane text comes back as things like
-    ``微信_Title`` or ``com.apple.systempreferences.AppleIDSettings*AppleIDSettings``.
-    It is still the only handle such an element has, so it is used -- but it is
-    flagged, so nothing downstream mistakes it for a name a person would read.
+    localised macOS, settings pane text comes back as internal identifiers, of the
+    shape ``<reverse.dns.bundle>*<PaneName>`` or ``<Something>_Title``. It is still
+    the only handle such an element has, so it is used -- but it is flagged, so
+    nothing downstream mistakes it for a name a person would read.
     """
     for key in ("AXTitle", "AXDescription", "AXHelp"):
         raw = details.get(key)
