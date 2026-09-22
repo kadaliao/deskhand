@@ -371,11 +371,27 @@ class TestFocus:
     def test_no_frontmost_application_at_all_is_reported(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Nothing is in front at all, so the refusal has to say so.
+
+        Every seam `focus` touches is stubbed, including the ones it grew later: it asks
+        whether the application is running (`_matching`) and asks LaunchServices to raise
+        it (`raise_window`), and neither exists on the machine CI runs this suite on. The
+        missing-AppKit condition is simulated here as well, so a macOS run cannot pass a
+        test that Linux would fail.
+        """
+        self._patch(monkeypatch, front=["something"])
         monkeypatch.setattr(appsmod, "frontmost", lambda: None)
-        monkeypatch.setattr(appsmod, "activate", lambda name: name)
+        monkeypatch.setattr(appsmod, "responsible_app", lambda: None)
+
+        def no_appkit() -> object:
+            raise CannotDo("pyobjc AppKit is unavailable; install the macos extra")
+
+        monkeypatch.setattr(appsmod, "appkit", no_appkit)
         with pytest.raises(CannotDo) as caught:
             appsmod.focus("Ghostty", attempts=1, wake=lambda _: None)
-        assert "unknown" in str(caught.value)
+        message = str(caught.value)
+        assert "unknown" in message
+        assert "install the macos extra" not in message
 
     def test_the_refusal_survives_a_machine_without_appkit(
         self, monkeypatch: pytest.MonkeyPatch
