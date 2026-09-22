@@ -23,6 +23,35 @@ from .types import (
     View,
 )
 
+CONTAINERS: frozenset[str] = frozenset(
+    {"window", "group", "scrollarea", "toolbar", "splitgroup", "browser"}
+)
+"""Roles that hold other things rather than being things to operate.
+
+A window advertises ``AXPress`` -- it means "raise me" -- so a window titled like a control
+is indistinguishable from that control by name alone. Measured: on a `zh-Hans` macOS the
+appearance task's first step, ``PRESS 外观``, resolved to the settings *window*, because its
+title is exactly ``外观`` and the sidebar row that the task meant carries that word only as
+a pixel-derived alias. ``PRESS`` on a window is not a press: it degraded to a coordinate
+click at the window's centre, which is a blind click into whatever happens to be there.
+"""
+
+
+def _is_container(target: Target) -> bool:
+    return target.kind.split(":", 1)[0] in CONTAINERS
+
+
+def _prefer_controls(candidates: list[Target]) -> list[Target]:
+    """Drop containers when something operable matched the same name.
+
+        Only when both kinds are present: a window is a legitimate thing to open when nothing
+        else matched it, and dropping it unconditionally would turn "open that window" into "no
+    target matching". This narrows the field; where the remaining candidates still tie, the
+        refusal below is unchanged.
+    """
+    controls = [target for target in candidates if not _is_container(target)]
+    return controls or candidates
+
 
 def resolve_target(choice: Choice, view: View, *, role: str) -> Target | None:
     """Find the target a choice refers to, by id or by label."""
@@ -37,19 +66,33 @@ def resolve_target(choice: Choice, view: View, *, role: str) -> Target | None:
 
     if label is not None:
         wanted = norm_text(label)
-        exact = [t for t in view.targets if t.enabled and norm_text(t.label) == wanted]
-        loose = exact or [
-            t for t in view.targets if t.enabled and wanted and wanted in norm_text(t.spoken())
+        matched = [
+            target
+            for target in view.targets
+            if target.enabled
+            and (
+                norm_text(target.label) == wanted
+                or (wanted and wanted in norm_text(target.spoken()))
+            )
         ]
-        if not loose:
+        if not matched:
             raise BadChoice(f"no {role} matching {label!r} in the current view")
-        if len(loose) > 1:
+        # A container is never what was meant when a control matched the same name, whether
+        # the container matched it exactly and the control only as a pixel-derived alias or
+        # the other way round. Measured: the settings window's title is exactly ``外观`` and
+        # the sidebar row that the task meant carried ``外观`` only as an alias, so
+        # "exact beats alias" alone chose the window and made the step a blind click.
+        operable = _prefer_controls(matched)
+        # Among equals, a real label still beats an alias.
+        exact = [target for target in operable if norm_text(target.label) == wanted]
+        candidates = exact or operable
+        if len(candidates) > 1:
             # Name each candidate by id, because "pick one of these" is only
             # actionable if the ids are visible: the fix for an ambiguous label is
             # to choose by id, and this message is fed back to the decider.
-            names = ", ".join(f"{t.kind}:{t.label or t.id} ({t.id})" for t in loose[:4])
-            raise BadChoice(f"{role} {label!r} is ambiguous ({len(loose)}): {names}")
-        return loose[0]
+            names = ", ".join(f"{t.kind}:{t.label or t.id} ({t.id})" for t in candidates[:4])
+            raise BadChoice(f"{role} {label!r} is ambiguous ({len(candidates)}): {names}")
+        return candidates[0]
 
     return None
 

@@ -36,6 +36,56 @@ def view(*targets: Target) -> View:
     return View(app="A", window="W", revision="r", targets=tuple(targets))
 
 
+class TestAContainerIsNotTheControlItIsNamedAfter:
+    """A window advertises AXPress -- it means "raise me" -- and it has a title.
+
+    Measured on a `zh-Hans` macOS: the appearance task's first step, ``PRESS 外观``,
+    resolved to the settings *window* because its title is exactly ``外观``, while the
+    sidebar row the task meant carried that word only as a pixel-derived alias. `PRESS`
+    on a window is not a press: the sensor degraded it to a coordinate click at the
+    window's centre, which is a blind click into whatever happens to be there.
+    """
+
+    def test_a_window_titled_like_a_control_loses_to_the_control(self) -> None:
+        window = target("w", "Appearance", Verb.PRESS, kind="window:standardwindow")
+        row = target("r", "Appearance", Verb.PRESS, kind="row:outlinerow")
+        choice = Choice(verb=Verb.PRESS, target_label="Appearance")
+        assert resolve_target(choice, view(window, row), role="target") is row
+
+    def test_a_pixel_named_alias_still_loses_to_a_real_label(self) -> None:
+        """The row is the looser match and the window the exact one; the row wins."""
+        window = target("w", "Appearance", Verb.PRESS, kind="window:standardwindow")
+        row = Target(
+            id="r",
+            kind="row:outlinerow",
+            label="",
+            labels=("Appearance",),
+            actions=frozenset({Verb.PRESS}),
+            box=Box(0, 0, 10, 10),
+        )
+        choice = Choice(verb=Verb.PRESS, target_label="Appearance")
+        assert resolve_target(choice, view(window, row), role="target") is row
+
+    def test_a_window_is_still_a_target_when_nothing_else_matched_it(self) -> None:
+        window = target("w", "Appearance", Verb.PRESS, kind="window:standardwindow")
+        choice = Choice(verb=Verb.PRESS, target_label="Appearance")
+        assert resolve_target(choice, view(window), role="target") is window
+
+    def test_two_controls_with_the_same_name_are_still_refused(self) -> None:
+        """The narrowing must not become guessing between equally good candidates."""
+        one = target("one", "Dark", Verb.PRESS)
+        two = target("two", "Dark", Verb.PRESS)
+        choice = Choice(verb=Verb.PRESS, target_label="Dark")
+        with pytest.raises(BadChoice, match="ambiguous"):
+            resolve_target(choice, view(one, two), role="target")
+
+    def test_a_group_loses_to_a_control_too(self) -> None:
+        group = target("g", "Timeline", Verb.PRESS, kind="group:hostingview")
+        button = target("b", "Timeline", Verb.PRESS)
+        choice = Choice(verb=Verb.PRESS, target_label="Timeline")
+        assert resolve_target(choice, view(group, button), role="target") is button
+
+
 class TestResolve:
     def test_by_id(self) -> None:
         choice = Choice(verb=Verb.PRESS, target="play")
