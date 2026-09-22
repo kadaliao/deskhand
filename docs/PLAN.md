@@ -122,6 +122,26 @@ is addressable *because pixels named it***", and on this machine it is not:
   screenshot never happens. Skipping the overlay on the one window this milestone is about
   is what made the milestone untestable, which is why `--pixels` now exists.
 
+### The reason, found later: the pixel layer could not read the interface
+
+None of that was a fusion problem, and the invariant it worried about was never in doubt.
+The pixel layer was **language-blind**: `_read` never told Vision which languages to
+recognise, so it recognised English -- and on a `zh-Hans` macOS that is 24 regions of
+English fragments and noise, and not one row of the sidebar. It was also reading them at
+half the available resolution, because the capture preferred
+`kCGWindowImageNominalResolution` (1x) over the native one.
+
+Both are fixed. The same probe now reads 41 regions with **all 41 absorbed**, and an AX
+element whose only label is the internal identifier
+`com.apple.Appearance-Settings.extension` comes back carrying the name `外观`. Numbers and
+the three-way comparison are in `docs/BENCHMARKS.md`.
+
+So the criterion is now *reachable*, and what stops it being claimed is narrower than
+before: in the window state measured afterwards there was no `row:outlinerow` in the tree
+at all, so the exact target the criterion names -- a sidebar row named by recognised text
+at its own geometry -- has not been observed yet. It has not been observed as false
+either; it has not been observed.
+
 The scripted task then produced a **false DONE**, which is the most useful result of the
 session. The trace, verbatim:
 

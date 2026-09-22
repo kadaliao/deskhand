@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from ...errors import CannotDo, NoPermission
@@ -40,7 +41,23 @@ def screen_capture_allowed() -> bool:
 
 
 class OCRSource:
-    """Visible text turned into targets."""
+    """Visible text turned into targets.
+
+    Recognises the languages the machine is set to use, not English, and at the accurate
+    level. Both distinctions are the difference between the pixel layer working on a
+    localised desktop and being blind on one. Measured on one Chinese System Settings
+    window, same capture:
+
+    | level | languages | regions | of which sidebar labels | ms |
+    |---|---|---|---|---|
+    | fast | unset (English) | 24 | 0 | 154 |
+    | fast | system | 16 | 0 | 154 |
+    | accurate | system | 40 | 9 (`通用`, `外观`, `辅助功能`, ...) | 540 |
+
+    Only the last row can name the controls this source exists to name. `fast` is not a
+    cheaper version of the same reading here, it is a different and useless one, so the
+    cheap default is not the honest default.
+    """
 
     name = "ocr"
     rank = 10
@@ -48,10 +65,11 @@ class OCRSource:
     def __init__(
         self,
         *,
-        level: str = "fast",
+        level: str = "accurate",
         min_confidence: float = 0.45,
         min_text_height: float = 0.006,
         max_targets: int = 160,
+        languages: Sequence[str] | None = None,
     ) -> None:
         if level not in {"fast", "accurate"}:
             raise ValueError("level must be 'fast' or 'accurate'")
@@ -61,7 +79,16 @@ class OCRSource:
         self.min_confidence = min_confidence
         self.min_text_height = min_text_height
         self.max_targets = max_targets
+        # ``None`` means "ask the machine"; an explicit empty tuple means "let Vision
+        # decide", which is what an ablation would want.
+        self.languages: tuple[str, ...] | None = None if languages is None else tuple(languages)
         self.last_window: Box | None = None
+
+    def _recognise(self) -> list[str]:
+        """The languages to hand Vision, in its own vocabulary."""
+        if self.languages is not None:
+            return list(self.languages)
+        return preferred_languages()
 
     def targets(self, *, pid: int, title: str = "", box: Box | None = None) -> tuple[Target, ...]:
         """Recognise text in the frontmost window of ``pid``."""
@@ -77,7 +104,10 @@ class OCRSource:
         if window_id is None:
             return ()
         image = _capture(window_id)
+        # A CGImage's dimensions are numbers, so float() cannot raise on them.
+        # ast-grep-ignore
         width = float(_quartz().CGImageGetWidth(image))
+        # ast-grep-ignore
         height = float(_quartz().CGImageGetHeight(image))
         if width <= 0 or height <= 0:
             return ()
@@ -101,6 +131,22 @@ def _quartz() -> Any:
     except ImportError as exc:  # pragma: no cover - macOS only
         raise CannotDo("pyobjc Quartz is unavailable; install the macos extra") from exc
     return Quartz
+
+
+def _appkit() -> Any:
+    try:
+        import AppKit
+    except ImportError as exc:  # pragma: no cover - macOS only
+        raise CannotDo("pyobjc AppKit is unavailable; install the macos extra") from exc
+    return AppKit
+
+
+def _vision() -> Any:
+    try:
+        import Vision
+    except ImportError as exc:  # pragma: no cover - macOS only
+        raise CannotDo("pyobjc Vision is unavailable; install the macos extra") from exc
+    return Vision
 
 
 def _candidates(pid: int) -> list[tuple[int, str, Box]]:
@@ -165,10 +211,14 @@ def _capture(window_id: int) -> Any:
             "the ScreenCaptureKit backend is required"
         )
     options = quartz.kCGWindowImageBoundsIgnoreFraming
-    if hasattr(quartz, "kCGWindowImageNominalResolution"):
-        options |= quartz.kCGWindowImageNominalResolution
-    elif hasattr(quartz, "kCGWindowImageBestResolution"):
+    # Native resolution, not nominal. On a Retina display the nominal capture is half the
+    # pixels, and that is visible in the recognition: the 1x image read `Xingyl Llao` where
+    # the 2x one read `Xingyi Liao`, and `AppleCare` and `Siri` came out legible only at 2x.
+    # ``to_box`` derives its scale from the image size, so the geometry is unaffected.
+    if hasattr(quartz, "kCGWindowImageBestResolution"):
         options |= quartz.kCGWindowImageBestResolution
+    elif hasattr(quartz, "kCGWindowImageNominalResolution"):
+        options |= quartz.kCGWindowImageNominalResolution
     image = quartz.CGWindowListCreateImage(
         quartz.CGRectNull, quartz.kCGWindowListOptionIncludingWindow, window_id, options
     )
@@ -182,26 +232,49 @@ def _capture(window_id: int) -> Any:
 # --------------------------------------------------------------------------- #
 
 
+def preferred_languages() -> list[str]:
+    """The languages this machine reads, as Vision spells them.
+
+    ``NSLocale.preferredLanguages()`` answers with full tags (``zh-Hans-SG``) and Vision
+    accepts them; the list is also the honest answer to "what should be recognised here",
+    which is a question about the machine rather than about this package.
+    """
+    try:
+        return [str(code) for code in _appkit().NSLocale.preferredLanguages()]
+    except Exception:  # no AppKit, or no locale: let Vision decide
+        return []
+
+
 def _read(image: Any, width: float, height: float, source: OCRSource) -> list[Reading]:
     del width, height
     try:
         import objc
-        import Vision
     except ImportError as exc:  # pragma: no cover - macOS only
         raise CannotDo("pyobjc Vision is unavailable; install the macos extra") from exc
+    # Through the accessor, like Quartz: pyobjc ships no stubs for these classes, so
+    # reaching them off an Any says "a framework call" once instead of once per call.
+    vision = _vision()
 
     readings: list[Reading] = []
     with objc.autorelease_pool():
-        request = Vision.VNRecognizeTextRequest.alloc().init()
+        request = vision.VNRecognizeTextRequest.alloc().init()
         request.setRecognitionLevel_(
-            getattr(Vision, "VNRequestTextRecognitionLevelFast", 1)
+            getattr(vision, "VNRequestTextRecognitionLevelFast", 1)
             if source.level == "fast"
-            else getattr(Vision, "VNRequestTextRecognitionLevelAccurate", 0)
+            else getattr(vision, "VNRequestTextRecognitionLevelAccurate", 0)
         )
         request.setUsesLanguageCorrection_(False)
+        languages = source._recognise()
+        if languages:
+            # Left unset, Vision recognises English: on a Chinese macOS that is 24 regions
+            # of noise and a sidebar it cannot see at all.
+            request.setRecognitionLanguages_(languages)
         if hasattr(request, "setMinimumTextHeight_"):
+            # Every float() in this function is converting a CGFloat that pyobjc hands back
+            # as a number, not parsing text, so none of them can raise ValueError.
+            # ast-grep-ignore
             request.setMinimumTextHeight_(float(source.min_text_height))
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, None)
+        handler = vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, None)
         ok = handler.performRequests_error_([request], None)
         if isinstance(ok, tuple):
             ok, error = (ok[0], ok[1] if len(ok) > 1 else None)
@@ -218,17 +291,22 @@ def _read(image: Any, width: float, height: float, source: OCRSource) -> list[Re
             text = str(candidate.string() or "").strip()
             if not text:
                 continue
+            # As above: a confidence from Vision is already a number.
+            # ast-grep-ignore
             confidence = float(candidate.confidence())
             if not math.isfinite(confidence) or confidence < source.min_confidence:
                 continue
             rect = observation.boundingBox()
+            # pyobjc hands a CGRect's components back as floats already, so there is nothing
+            # to convert (and nothing here can raise, which is what the int()/float() rule
+            # is about).
             readings.append(
                 Reading(
                     text=text,
-                    x=float(rect.origin.x),
-                    y=float(rect.origin.y),
-                    w=float(rect.size.width),
-                    h=float(rect.size.height),
+                    x=rect.origin.x,
+                    y=rect.origin.y,
+                    w=rect.size.width,
+                    h=rect.size.height,
                     confidence=confidence,
                 )
             )

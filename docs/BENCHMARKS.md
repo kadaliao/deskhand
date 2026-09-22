@@ -229,6 +229,31 @@ That is now measurable rather than arguable because `--pixels` forces the overla
 not settle what the heuristic should be: "many targets with no labels" is the signal the
 count is standing in for, and deciding that needs its own measurement.
 
+### The pixel layer was language-blind, which is not worse reading but a different reading
+
+`_read` never set `recognitionLanguages`, so Vision recognised English. On a `zh-Hans`
+macOS that is not "slightly worse OCR". One System Settings window, same capture, three
+configurations:
+
+| recognition level | languages | regions | sidebar labels found | ms |
+|---|---|---|---|---|
+| fast | unset (Vision's default) | 24 | 0 | 154 |
+| fast | the machine's own | 16 | 0 | 154 |
+| accurate | the machine's own | 40 | **9** (`通用`, `外观`, `辅助功能`, ...) | 540 |
+
+`fast` does not read CJK at all, at either language setting, so the cheap default was not a
+cheaper version of the same reading -- it was a blind one. The defaults are now `accurate`
+and the machine's own languages, and a full fused observation of the frontmost window went
+from 14 recognised regions to **41, all 41 absorbed into accessibility elements**. An AX
+element whose only label is the internal identifier
+`com.apple.Appearance-Settings.extension` came back carrying the name `外观`.
+
+Capture resolution mattered separately: the code preferred
+`kCGWindowImageNominalResolution` (1x) over `kCGWindowImageBestResolution` (native). On a
+Retina display that halves the pixels handed to Vision, and it showed -- the 1x image read
+`Xingyl Llao` where the 2x image read `Xingyi Liao`, and `AppleCare` was legible only at 2x.
+`to_box` derives its scale from the image size, so nothing else had to change.
+
 ## Not measured
 
 - Region-scoped recognition: the current pass recognises the whole window image, so the
