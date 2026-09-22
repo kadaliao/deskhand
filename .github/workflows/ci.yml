@@ -15,21 +15,28 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.12", "3.13"]
+    env:
+      # One interpreter for the whole job. `uv run` and `uv sync` must agree on it,
+      # or `uv run` rebuilds the environment -- without the dev extra -- and then
+      # cannot find the tools it was asked to run.
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - name: Install
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        run: uv sync --extra dev
+      # --no-sync: the environment is already exactly right, and a bare `uv run`
+      # would sync it back to the default (no extras) before running.
       - name: Lint
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
       - name: Format
-        run: uv run ruff format --check .
+        run: uv run --no-sync ruff format --check .
       - name: Types
-        run: uv run mypy src
+        run: uv run --no-sync mypy src
       - name: Tests
-        run: uv run pytest -q
+        run: uv run --no-sync pytest -q
 
   macos:
     runs-on: macos-latest
@@ -41,6 +48,6 @@ jobs:
       - name: Install with the macos extra
         run: uv sync --extra macos --extra dev
       - name: The macOS package must import without importing pyobjc
-        run: uv run python -c "import deskhand.sensors.macos as m; print(m.AXSource, m.MacSensor)"
+        run: uv run --no-sync python -c "import deskhand.sensors.macos as m; print(m.AXSource, m.MacSensor)"
       - name: The loop runs with no permissions at all
-        run: uv run deskhand demo
+        run: uv run --no-sync deskhand demo

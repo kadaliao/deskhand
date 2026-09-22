@@ -18,7 +18,9 @@ from deskhand.types import Box, Verb
 WINDOW = Box(100, 200, 1000, 500)
 
 
-def reading(text: str, x: float, y: float, w: float, h: float, confidence: float = 0.9) -> Reading:
+def reading(
+    text: str, x: float, y: float, w: float, h: float, *, confidence: float = 0.9
+) -> Reading:
     return Reading(text=text, x=x, y=y, w=w, h=h, confidence=confidence)
 
 

@@ -61,7 +61,9 @@ decider = RuleDecider(
 report = Runner(
     sensor=open_sensor(),
     decider=decider,
-    verifier=PredicateVerifier({"Appearance is Dark": lambda t, v: any(x.value == "Dark" for x in v.targets)}),
+    verifier=PredicateVerifier(
+        {"Appearance is Dark": lambda t, v: any(x.value == "Dark" for x in v.targets)}
+    ),
 ).run(task)
 
 print(report.status, report.steps_taken, [s.via for s in report.steps])
@@ -134,6 +136,26 @@ It reports the application the permissions will be attributed to, fires the
 official system dialogs (which name that application), and prints the exact
 System Settings path for whatever is missing. Screen Recording is only re-read
 when a process starts, so restart that application afterwards.
+
+## Development
+
+Run the checks through the project's own environment. `python3 -m pytest` from your
+shell will happily use a different Python and different tool versions than the ones
+CI uses, and a green local run then means nothing: the first version of this file was
+committed green locally and red in CI three separate ways.
+
+```bash
+uv sync --extra dev
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+uv run --no-sync mypy src
+uv run --no-sync pytest -q
+```
+
+`--no-sync` matters. Without it, `uv run` re-syncs the environment to the default
+set, which drops the `dev` extra, and then cannot find the tool it was asked to run.
+`ruff format --check` also covers the Python block in this file, so the example above
+is formatted whether anybody remembers to format it or not.
 
 ## Slow networks
 
