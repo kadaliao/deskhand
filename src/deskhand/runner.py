@@ -126,6 +126,10 @@ class Runner:
         look_start = time.perf_counter()
         view = self.sensor.observe()
         look_ms = _ms(look_start)
+        # Revision digests already seen, and the step each was first seen at. The starting
+        # view counts as step 0 so a run that returns to it before doing anything is caught.
+        visited: dict[str, int] = {view.revision: 0}
+        loops = 0
 
         def idle(n: int) -> Step:
             return Step(n=n, before=view.revision, after=view.revision, times=Times(look=look_ms))
@@ -306,6 +310,30 @@ class Runner:
                         view=view,
                         steps=steps,
                         why=f"{quiet} steps in a row changed nothing",
+                    )
+
+            # The other shape of stuck: the screen keeps changing and keeps coming back.
+            # `progress` is content-based, so moving a sidebar selection counts as
+            # progress -- which is exactly what a lost decider does, and it means the
+            # no-progress bound above never fires. Measured on a real model run: five
+            # KEY DOWN, one KEY UP and two PRESS on the same three rows, all "progress",
+            # until the step budget absorbed it.
+            first_seen = visited.get(after.revision)
+            if first_seen is None:
+                visited[after.revision] = n
+                loops = 0
+            else:
+                loops += 1
+                if loops >= limits.loop_steps:
+                    return self._stop(
+                        status=Status.STUCK,
+                        task=task,
+                        view=view,
+                        steps=steps,
+                        why=(
+                            f"the desktop returned to the state from step {first_seen} "
+                            f"{loops} times; the decider is going in circles"
+                        ),
                     )
             look_ms = 0
 

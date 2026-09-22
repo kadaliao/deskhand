@@ -346,11 +346,22 @@ class Limits:
     max_ms: int | None = None
     max_failures: int = 3
     no_progress_steps: int = 3
+    loop_steps: int = 4
+    """How many times the desktop may return to a state it has already been in.
+
+    ``no_progress_steps`` catches a screen that stops changing. This catches the other
+    shape of stuck: a decider that keeps changing it and keeps coming back, which is what
+    a model does when it is lost. Measured on a real run -- five ``KEY DOWN``, one
+    ``KEY UP`` and two ``PRESS`` on the same three rows, every one of them counted as
+    progress, until the step budget absorbed it instead.
+    """
     settle_ms: int = 2500
 
     def __post_init__(self) -> None:
         if self.max_steps < 1:
             raise ValueError("Limits.max_steps must be >= 1")
+        if self.loop_steps < 1:
+            raise ValueError("Limits.loop_steps must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)

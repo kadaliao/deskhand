@@ -14,7 +14,14 @@ from typing import Any
 from .types import Choice, Limits, Report, Status, Task, Verb, View
 
 TASK_FIELDS = {"goal", "checks", "inputs", "notes", "limits", "steps"}
-LIMIT_FIELDS = {"max_steps", "max_ms", "max_failures", "no_progress_steps", "settle_ms"}
+LIMIT_FIELDS = {
+    "max_steps",
+    "max_ms",
+    "max_failures",
+    "no_progress_steps",
+    "loop_steps",
+    "settle_ms",
+}
 CHOICE_FIELDS = {
     "verb",
     "finish",

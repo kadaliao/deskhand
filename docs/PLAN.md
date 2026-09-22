@@ -490,8 +490,12 @@ Three things this measured that were not known before:
    the scripted decider.
 2. **The loop could not tell circling from progress.** Each `KEY DOWN` moved the sidebar
    selection, which changes the content digest, so all eight steps counted as progress and
-   `no_progress_steps` never fired. A model that oscillates burns the step budget instead of
-   being stopped by the bound meant for exactly that.
+   `no_progress_steps` never fired -- the bound meant for exactly that could not see it, and
+   the step budget absorbed it instead. `Limits.loop_steps` now catches the other shape of
+   stuck: how many times the desktop may return to a state it has already been in, tracked
+   by `revision` digest, with the step it kept returning to named in the verdict. The two
+   bounds are complements -- one for a screen that stops changing, one for a screen that
+   keeps changing and keeps coming back.
 3. **A verb is not a trace.** `KEY` alone does not say *which* key, which is the one detail
    needed to read a run of `KEY, KEY, KEY, PRESS`; the step line shows it now. And `--focus`
    with `--json` put a human line in front of the report, making it unparseable; that line

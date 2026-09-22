@@ -14,6 +14,7 @@ from deskhand.types import (
     Box,
     Choice,
     Limits,
+    Report,
     Status,
     Step,
     Target,
@@ -400,3 +401,67 @@ class TestSensorContract:
             assert not live.is_stale(view, action)
             live.act(view, action)
             assert live.scene == f"s{expected_scene + 1}"
+
+
+class TestGoingInCircles:
+    """The other shape of stuck: the screen keeps changing and keeps coming back.
+
+    Regression from a real model run. It moved a sidebar selection down, up, down, and
+    pressed the same two rows over and over: eight steps, every one of them reported as
+    progress, and the run ended on the *step* budget -- the bound meant to catch exactly
+    this never fired, because `progress` is content-based and a moved selection changes
+    the content.
+    """
+
+    def _loop(self, **limits: int) -> Report:
+        # Two scenes, so a press always has a target in the live view, and a decider that
+        # walks between them forever.
+        circling = FakeSensor(
+            {"one": (A,), "two": (B,)},
+            start="one",
+            edges={("one", "a", Verb.PRESS): "two", ("two", "b", Verb.PRESS): "one"},
+        )
+        decider = ScriptedDecider([press("Alpha", "a"), press("Beta", "b")] * 6)
+        return Runner(
+            sensor=circling,
+            decider=decider,
+            limits=Limits(max_steps=12, loop_steps=limits.get("loop_steps", 3)),
+        ).run(TASK)
+
+    def test_a_decider_that_returns_to_the_same_screen_is_stopped(self) -> None:
+        report = self._loop()
+        assert report.status is Status.STUCK
+        assert "circles" in report.why
+
+    def test_it_stops_before_the_step_budget_does(self) -> None:
+        report = self._loop()
+        assert report.steps_taken < 12
+
+    def test_it_says_which_state_it_kept_returning_to(self) -> None:
+        report = self._loop()
+        assert "the state from step" in report.why
+
+    def test_every_step_was_genuinely_reported_as_progress(self) -> None:
+        """That is why the existing bound could not catch it: the screen *was* changing."""
+        report = self._loop()
+        assert all(s.progress for s in report.steps)
+
+    def test_a_run_that_keeps_finding_new_screens_is_not_stopped(self) -> None:
+        forward = FakeSensor(
+            {"one": (A,), "two": (B,), "three": (C,)},
+            start="one",
+            edges={("one", "a", Verb.PRESS): "two", ("two", "b", Verb.PRESS): "three"},
+        )
+        decider = ScriptedDecider(
+            [
+                press("Alpha", "a"),
+                press("Beta", "b"),
+                Choice(finish=Status.DONE, says=("everything pressed",)),
+            ]
+        )
+        report = Runner(sensor=forward, decider=decider, verifier=verifier()).run(TASK)
+        assert report.status is Status.DONE
+
+    def test_looping_must_be_configured_at_least_once(self) -> None:
+        with pytest.raises(ValueError, match="loop_steps"):
+            Limits(loop_steps=0)
