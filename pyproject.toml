@@ -34,7 +34,8 @@ dev = [
 deskhand = "deskhand.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/liaoxingyi/deskhand"
+Homepage = "https://github.com/kadaliao/deskhand"
+Issues = "https://github.com/kadaliao/deskhand/issues"
 
 [build-system]
 requires = ["hatchling"]

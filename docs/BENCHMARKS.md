@@ -129,9 +129,9 @@ eight rapid observations, no gap :  65, 65, 65, 65, 65, 65, 65, 65
 eight observations, one second apart: 65, 65, 65, 65, 65, 65, 106, 156
 ```
 
-**What this establishes:** for *this* page, in *this* environment — a live page
-(`runscript_content` in its URL) being operated by a person while the tooling
-repeatedly took focus — the number of accessibility elements exposed for one window
+**What this establishes:** for *this* page, in *this* environment — a live web
+application page being operated by a person while the tooling repeatedly took focus —
+the number of accessibility elements exposed for one window
 varied by up to 8x between consecutive observations, in a timing-dependent way.
 
 **What it does not establish**, and an earlier revision of this file claimed it:
