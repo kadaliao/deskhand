@@ -20,7 +20,7 @@ from typing import Any
 from .errors import BadChoice
 from .types import Choice, Status, Target, Task, View
 from .validate import build_action, resolve_target
-from .verify import NoVerifier
+from .verify import NoVerifier, WaivedVerifier
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +113,19 @@ def _finish_finding(number: int, choice: Choice, task: Task, verifier: object | 
     if choice.finish is not Status.DONE:
         return Finding(number, what, True, choice.why or "the decider stops here", None)
 
-    claims = tuple(choice.says) or task.checks
+    # The decider's own nomination is not the question here either: a rehearsal has to
+    # report on exactly what a real run would verify.
+    claims = task.checks
+    if isinstance(verifier, WaivedVerifier):
+        # A waiver is not a confirmation, and a rehearsal that called it one would be
+        # promising the same false success the waiver produces.
+        return Finding(
+            number,
+            what,
+            True,
+            f"{len(claims)} claim(s) would be WAIVED rather than checked (--trust-decider)",
+            None,
+        )
     if verifier is None or isinstance(verifier, NoVerifier):
         return Finding(
             number,
@@ -147,11 +159,17 @@ def _action_finding(number: int, choice: Choice, task: Task, view: View) -> Find
     except BadChoice:
         target = None
 
+    # Computed out here rather than inside the handler: it describes the situation, not
+    # the error, and an `and` in an except clause's body is what the S5714 check reads as
+    # "a boolean expression in an except statement" (it searches the whole clause, not
+    # just the exception types).
+    hidden_behind_an_earlier_step = target is None and number > 1
+
     try:
         action = build_action(choice, view, task)
     except BadChoice as exc:
         detail = str(exc)
-        if target is None and number > 1:
+        if hidden_behind_an_earlier_step:
             detail += " (not in the current view; an earlier step may reveal it)"
         return Finding(number, what, False, detail, None)
 

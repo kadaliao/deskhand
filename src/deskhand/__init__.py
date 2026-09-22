@@ -4,9 +4,10 @@ Accessibility is the skeleton, pixels are an overlay, and the loop survives
 failures instead of ending on them.
 """
 
-from .errors import BadChoice, CannotDo, DeskhandError, NoPermission, StaleTarget
+from .errors import BadChoice, CannotDo, DeskhandError, ModelFailed, NoPermission, StaleTarget
 from .fingerprint import Fingerprint
 from .fusion import Fusion, fuse
+from .model import Model
 from .protocols import Decider, HitTester, Sensor, Source, Verifier
 from .rehearse import Finding, Rehearsal, rehearse
 from .runner import Runner
@@ -29,7 +30,7 @@ from .types import (
     View,
 )
 from .validate import build_action
-from .verify import NoVerifier, PredicateVerifier
+from .verify import ModelVerifier, NoVerifier, PredicateVerifier, WaivedVerifier
 
 __all__ = [
     "ANYWHERE",
@@ -48,6 +49,9 @@ __all__ = [
     "Fusion",
     "HitTester",
     "Limits",
+    "Model",
+    "ModelFailed",
+    "ModelVerifier",
     "NoPermission",
     "NoVerifier",
     "PredicateVerifier",
@@ -65,6 +69,7 @@ __all__ = [
     "Verb",
     "Verifier",
     "View",
+    "WaivedVerifier",
     "build_action",
     "fuse",
     "rehearse",

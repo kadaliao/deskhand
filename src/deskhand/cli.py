@@ -16,12 +16,16 @@ from collections.abc import Sequence
 from typing import Any
 
 from . import demo, json_io
+from .deciders.llm import LLMDecider
 from .deciders.scripted import ScriptedDecider
 from .errors import DeskhandError
+from .model import ENV_COMMAND as MODEL_COMMAND_ENV
+from .model import model_from_env
+from .protocols import Decider, Verifier
 from .rehearse import Rehearsal, rehearse
 from .runner import Runner
-from .types import Report, Status, Step, shape_digest
-from .verify import PredicateVerifier
+from .types import Choice, Report, Status, Step, shape_digest
+from .verify import ModelVerifier, WaivedVerifier
 
 OK, FAILED, ENVIRONMENT = 0, 1, 2
 
@@ -40,11 +44,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     probe = sub.add_parser("probe", help="dump the fused accessibility + pixel view")
     _output_flags(probe)
-    probe.add_argument("--no-pixels", action="store_true", help="accessibility only")
+    _pixel_flags(probe)
     probe.add_argument("--frames", type=int, default=1, help="observe this many times")
 
     doctor = sub.add_parser("doctor", help="permissions, coverage and timing for the frontmost app")
     doctor.add_argument("--json", action="store_true")
+    _pixel_flags(doctor)
 
     stability = sub.add_parser(
         "stability",
@@ -55,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     stability.add_argument(
         "--focus", default=None, help="bring this application to the front first"
     )
-    stability.add_argument("--no-pixels", action="store_true")
+    _pixel_flags(stability)
     stability.add_argument("--json", action="store_true")
 
     bench = sub.add_parser("bench", help="measure what an observation and a settle actually cost")
@@ -63,7 +68,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--focus", default=None, help="bring this running application to the front first"
     )
     bench.add_argument("--json", action="store_true")
-    bench.add_argument("--no-pixels", action="store_true")
+    _pixel_flags(bench)
     bench.add_argument("--frames", type=int, default=8, help="how many observations to time")
     bench.add_argument("--settle-frames", type=int, default=5, help="how many settles to time")
     bench.add_argument("--budget", type=int, default=2500, help="settle budget in ms")
@@ -81,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run = sub.add_parser("run", help="run a task file against the real desktop")
     run.add_argument("--task", required=True, help="JSON task, optionally with a steps script")
     run.add_argument("--json", action="store_true")
-    run.add_argument("--no-pixels", action="store_true")
+    _pixel_flags(run)
     run.add_argument(
         "--focus",
         default=None,
@@ -97,7 +102,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="accept the decider's own DONE claim without a verifier (unsafe)",
     )
-
+    run.add_argument(
+        "--model",
+        action="store_true",
+        help=(
+            f"let a model decide, and have a second model confirm DONE (needs {MODEL_COMMAND_ENV})"
+        ),
+    )
     args = parser.parse_args(argv)
     handlers = {
         "demo": _demo,
@@ -158,7 +169,7 @@ def _stability(args: argparse.Namespace) -> int:
     from .stability import Sample, Stability
 
     _focus(args)
-    sensor = _mac_source(no_pixels=args.no_pixels)
+    sensor = _mac_source(args)
     samples: list[Sample] = []
     for index in range(max(1, args.frames)):
         started = time.perf_counter()
@@ -201,22 +212,35 @@ def _bench(args: argparse.Namespace) -> int:
     thing, so this reports the first frame and the rest separately.
     """
     _focus(args)
-    sensor = _mac_source(no_pixels=args.no_pixels)
+    sensor = _mac_source(args)
 
+    frames = max(1, args.frames)
     observes: list[int] = []
     counts: list[int] = []
     titles: list[str] = []
-    targets = 0
-    for _ in range(max(1, args.frames)):
+
+    def take() -> Any:
+        """One timed observation, recorded in the three sample lists.
+
+        A named first frame instead of an assignment inside a loop: the same
+        number of observations and the same per-frame timing, but which view the
+        numbers describe is no longer something a reader (or a checker) has to
+        infer from ``max(1, ...)``.
+        """
         started = time.perf_counter()
-        view = sensor.observe()
+        observed = sensor.observe()
         observes.append(round((time.perf_counter() - started) * 1000))
-        counts.append(len(view.targets))
-        titles.append(view.window)
-        targets = len(view.targets)
+        counts.append(len(observed.targets))
+        titles.append(observed.window)
+        return observed
+
+    view = take()
+    for _ in range(frames - 1):
+        view = take()
+    targets = counts[-1]
 
     probes: list[int] = []
-    for _ in range(max(1, args.frames)):
+    for _ in range(frames):
         started = time.perf_counter()
         sensor.probe()
         probes.append(round((time.perf_counter() - started) * 1000))
@@ -228,7 +252,7 @@ def _bench(args: argparse.Namespace) -> int:
         settles.append(round((time.perf_counter() - started) * 1000))
 
     warm = observes[1:] or observes
-    observe_warm = int(statistics.median(warm))
+    observe_warm = round(statistics.median(warm))
     report = {
         "app": view.app,
         "window": view.window,
@@ -291,10 +315,32 @@ def _demo(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 
-def _mac_source(no_pixels: bool = False) -> Any:
+def _pixel_flags(parser: argparse.ArgumentParser) -> None:
+    """How much of the pixel overlay to use.
+
+    ``--no-pixels`` is accessibility only. ``--pixels`` forces the screenshot and the
+    recognition pass even when accessibility looks rich. Both exist because the
+    default is a heuristic, and the heuristic is wrong for exactly the window M1 is
+    about: System Settings exposes 100+ targets (above ``rich_at``), so ``auto`` skips
+    the overlay entirely, while the 27 sidebar rows that matter have no name at all.
+    """
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--no-pixels", action="store_true", help="accessibility only")
+    group.add_argument(
+        "--pixels",
+        action="store_true",
+        help="force the pixel overlay even when accessibility looks rich",
+    )
+
+
+def _mac_source(args: argparse.Namespace) -> Any:
     from .sensors.macos.screen import open_sensor
 
-    return open_sensor(pixels=False if no_pixels else "auto")
+    if getattr(args, "no_pixels", False):
+        return open_sensor(pixels=False)
+    if getattr(args, "pixels", False):
+        return open_sensor(pixels=True)
+    return open_sensor(pixels="auto")
 
 
 def _ax(args: argparse.Namespace) -> int:
@@ -330,7 +376,7 @@ def _ax(args: argparse.Namespace) -> int:
 
 def _probe(args: argparse.Namespace) -> int:
     _focus(args)
-    sensor = _mac_source(no_pixels=args.no_pixels)
+    sensor = _mac_source(args)
     views = []
     for _ in range(max(1, args.frames)):
         started = time.perf_counter()
@@ -400,7 +446,7 @@ def _doctor(args: argparse.Namespace) -> int:
     }
 
     if report["permissions"]["screen_recording"]:
-        sensor = _mac_source(no_pixels=False)
+        sensor = _mac_source(args)
         started = time.perf_counter()
         fused = sensor.observe()
         report["fused"] = {
@@ -418,7 +464,7 @@ def _doctor(args: argparse.Namespace) -> int:
 def _app_ref() -> Any:
     from .sensors.macos.ax import appkit, ax
 
-    pid = int(appkit().NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier())
+    pid = appkit().NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier()
     return ax().AXUIElementCreateApplication(pid)
 
 
@@ -451,46 +497,77 @@ def _focus(args: argparse.Namespace) -> None:
     name = getattr(args, "focus", None)
     if not name:
         return
+    # Machine-readable output goes to stdout, so anything meant for a person goes to
+    # stderr when --json is on: a human line in front of the report made it unparseable.
+    sink = sys.stderr if getattr(args, "json", False) else sys.stdout
     from .sensors.macos.apps import focus, frontmost
 
     before = frontmost()
     if before and before[0] == name:
-        print(f"already frontmost: {name} (pid {before[1]})")
+        print(f"already frontmost: {name} (pid {before[1]})", file=sink)
         return
     activated = focus(name)
-    print(f"took focus: {activated} (was {before[0] if before else 'nothing'})")
+    print(f"took focus: {activated} (was {before[0] if before else 'nothing'})", file=sink)
 
 
 def _run(args: argparse.Namespace) -> int:
     task, choices = json_io.load_task(args.task)
-    if not choices:
-        print("task file has no 'steps' script; nothing to run", file=sys.stderr)
+    if not choices and not args.model:
+        print(
+            "task file has no 'steps' script; use --model to let a model decide instead",
+            file=sys.stderr,
+        )
         return ENVIRONMENT
-    _focus(args)
-    sensor = _mac_source(no_pixels=args.no_pixels)
-    verifier = None
+    # Built before anything touches the desktop, so a missing model is reported
+    # without first taking focus away from whoever is using the machine.
+    decider: Decider
+    verifier: Verifier | None = None
+    model_label: str | None = None
+    if args.model:
+        decider_model = model_from_env()
+        model_label = decider_model.name
+        decider = LLMDecider(decider_model)
+        # A second, separate transport on purpose: a verifier that shares a
+        # conversation with the decider is not an independent check.
+        verifier = ModelVerifier(model_from_env())
+    else:
+        decider = ScriptedDecider(choices)
     if args.trust_decider:
         warnings.warn(
             "--trust-decider: DONE is accepted without independent verification", stacklevel=1
         )
-        verifier = PredicateVerifier(dict.fromkeys(task.checks, _always))
+        verifier = WaivedVerifier()
+
+    _focus(args)
+    sensor = _mac_source(args)
     if args.dry_run:
         view = sensor.observe()
-        rehearsal = rehearse(task, choices, view, verifier=verifier)
+        planned: tuple[Choice, ...]
+        if args.model:
+            # A model rehearsal: one observation, one question, nothing executed. The
+            # whole point of rehearsing is to ask before acting, and a model is exactly
+            # what should not be let loose on a real desktop untried. Asking twice is
+            # also avoided on purpose -- this is one call, not a run.
+            try:
+                planned = (decider.choose(task=task, view=view, steps=()),)
+            except Exception as exc:
+                print(f"the model could not be asked: {type(exc).__name__}: {exc}", file=sys.stderr)
+                return FAILED
+            if not args.json:
+                print(f"asked {model_label}, which said: {planned[0].why!r}")
+        else:
+            planned = choices
+        rehearsal = rehearse(task, planned, view, verifier=verifier)
         if args.json:
             print(json_io.dump(rehearsal.brief()))
         else:
             _print_rehearsal(rehearsal)
         return FAILED if rehearsal.first_blocked else OK
 
-    runner = Runner(sensor=sensor, decider=ScriptedDecider(choices), verifier=verifier)
+    runner = Runner(sensor=sensor, decider=decider, verifier=verifier)
     report = runner.run(task)
     _print_report(report, json_output=args.json)
     return OK if report.status is Status.DONE else FAILED
-
-
-def _always(task: Any, view: Any) -> bool:  # noqa: ARG001
-    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -569,6 +646,12 @@ def _print_step(step: Step) -> None:
         print(f"{step.n:>3} {times} FAIL {step.failed}: {step.why}")
         return
     what = str(choice.get("verb") or choice.get("finish"))
+    if not label:
+        # A verb is not the whole action: "KEY" on its own hid which key was pressed,
+        # which is exactly what a trace of KEY, KEY, KEY, PRESS needs in order to be read.
+        label = " ".join(
+            str(choice[key]) for key in ("key", "chord", "scroll", "value_from") if choice.get(key)
+        )
     if step.action is None:
         # A finish step: nothing was acted on, so movement would be noise.
         print(f"{step.n:>3} {times} {what:<8} {'':<24} {step.why}")

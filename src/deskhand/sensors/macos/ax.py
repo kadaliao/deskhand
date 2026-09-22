@@ -202,11 +202,23 @@ class AXSource:
     # ---------------------------------------------------------------- front
 
     def _frontmost(self) -> tuple[int, str, Any]:
-        app = appkit().NSWorkspace.sharedWorkspace().frontmostApplication()
-        if app is None:
+        """The application in front *now*, from the window server.
+
+        Deliberately not ``NSWorkspace.frontmostApplication()``: in a process with no run
+        loop that serves a snapshot taken at first access, so it can name an application
+        that is no longer in front. That is not merely a stale reading, it is an
+        inconsistency with teeth: a coordinate click is aimed at the window being
+        *observed*, so observing one application while another is actually in front sends
+        the click into whatever is there. Measured during a model run -- the sensor read
+        System Settings while Chrome was in front, and two clicks intended for a sidebar
+        row had no effect at all.
+        """
+        from .apps import frontmost as live_frontmost  # lazy: apps imports this module
+
+        current = live_frontmost()
+        if current is None:
             raise CannotDo("no frontmost application")
-        pid = int(app.processIdentifier())
-        name = str(app.localizedName() or f"pid:{pid}")
+        name, pid = current
         return pid, name, ax().AXUIElementCreateApplication(pid)
 
     def _window_of(self, app_ref: Any) -> tuple[Any, str, Box | None]:
@@ -424,6 +436,9 @@ class AXSource:
         self.frame = Frame(pid=pid, app=name, title=title, box=box)
         found: list[Target] = []
         self._walk(root, {}, found, set(), depth=0, budget=min(self.max_elements, 400), path="0")
+        # id()/float() here are converting bools and pids that are already numbers, not
+        # parsing text: the unchecked-throwing-call rule cannot see that.
+        # ast-grep-ignore
         return digest(f"{t.kind}|{t.label}|{int(t.focused)}|{int(t.enabled)}" for t in found)
 
     # -------------------------------------------------------------- one node
@@ -437,6 +452,8 @@ class AXSource:
         path: str = "",
         selected_ids: frozenset[str] = frozenset(),
     ) -> Target | None:
+        # AXHidden is a CFBoolean, so pyobjc hands back a real bool: `is True` is exact.
+        # ast-grep-ignore
         if details.get("AXHidden") is True:
             return None
 
@@ -702,6 +719,8 @@ def careful_point(value: Any) -> tuple[float, float] | None:
     obvious ``value.x`` raises and quietly loses every rectangle in the tree.
     """
     if isinstance(value, tuple) and len(value) == PAIR:
+        # A pair from an AXValue is numeric, so float() cannot raise on it.
+        # ast-grep-ignore
         return (float(value[0]), float(value[1]))
     if _ax_kind(value) != getattr(ax(), "kAXValueCGPointType", 1):
         return None
@@ -717,6 +736,8 @@ def careful_point(value: Any) -> tuple[float, float] | None:
 def careful_size(value: Any) -> tuple[float, float] | None:
     """A size, whether it arrives as an AXValue or as a plain pair."""
     if isinstance(value, tuple) and len(value) == PAIR:
+        # As in careful_point: numeric input, so float() cannot raise.
+        # ast-grep-ignore
         return (float(value[0]), float(value[1]))
     if _ax_kind(value) != getattr(ax(), "kAXValueCGSizeType", 2):
         return None

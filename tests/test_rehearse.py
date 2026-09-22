@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 
 from deskhand import demo
-from deskhand.rehearse import rehearse
+from deskhand.rehearse import Rehearsal, rehearse
 from deskhand.types import Choice, Status, Task, Verb
-from deskhand.verify import NoVerifier, PredicateVerifier
+from deskhand.verify import NoVerifier, PredicateVerifier, WaivedVerifier
 
 TASK = demo.task()
 CLAIM = "Gaussian Blur is enabled on the clip"
@@ -15,7 +15,7 @@ def script(*choices: Choice) -> tuple[Choice, ...]:
     return choices
 
 
-def home_rehearsal(verifier: object | None = None):
+def home_rehearsal(verifier: object | None = None) -> Rehearsal:
     sensor = demo.sensor()
     return rehearse(
         TASK,
@@ -92,6 +92,13 @@ class TestFinishFindings:
         finding = home_rehearsal(PredicateVerifier({CLAIM: lambda t, v: True})).findings[3]
         assert finding.ok is True
         assert "confirmable" in finding.detail
+
+    def test_a_waived_finish_says_waived_rather_than_confirmable(self) -> None:
+        """A rehearsal must not promise the false success the waiver produces."""
+        finding = home_rehearsal(WaivedVerifier()).findings[3]
+        assert finding.ok is True
+        assert "WAIVED" in finding.detail
+        assert "look confirmable" not in finding.detail
 
     def test_a_claim_with_no_predicate_is_flagged_as_a_wording_mistake(self) -> None:
         finding = home_rehearsal(

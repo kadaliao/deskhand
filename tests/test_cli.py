@@ -57,6 +57,25 @@ def test_the_demo_report_is_also_available_as_json(
     assert capsys.readouterr().out == ""
 
 
+def test_a_model_rehearsal_reports_a_missing_model_before_it_touches_the_desktop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The model is built before the sensor, so a missing one costs nothing.
+
+    This matters most for a rehearsal: the first thing touching the desktop does is take
+    focus away from whoever is using the machine. It also pins that a model run does not
+    need a 'steps' script, which is the only reason a rehearsal works without one.
+    """
+    monkeypatch.delenv("DESKHAND_MODEL_COMMAND", raising=False)
+    path = tmp_path / "task.json"
+    path.write_text(json.dumps({"goal": "do it", "checks": ["done"]}))
+    code = main(["run", "--task", str(path), "--model", "--dry-run"])
+    assert code == ENVIRONMENT
+    err = capsys.readouterr().err
+    assert "DESKHAND_MODEL_COMMAND" in err
+    assert "no 'steps' script" not in err
+
+
 def test_unknown_commands_are_rejected_system_exits() -> None:
     with pytest.raises(SystemExit):
         main(["frobnicate"])

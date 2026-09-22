@@ -107,7 +107,14 @@ class Runner:
     # ------------------------------------------------------------------- loop
 
     def steps(self, task: Task) -> Generator[Step, None, Report]:
-        """Yield one Step per turn. The return value is the Report."""
+        """Yield one Step per turn. The return value is the Report.
+
+        Deliberate PEP 380: the outcome travels in ``StopIteration.value``, which
+        :meth:`run` reads, so one pass over the loop hands a caller both the step
+        stream and the verdict, and dropping the generator early is the only way to
+        lose it. The ``no-return-value-in-generator`` rule expects the value to be
+        discarded; here it is not, so the rule is declined rather than obeyed.
+        """
         limits = self.limits or task.limits
         self._cancel.clear()
         deadline = None if limits.max_ms is None else time.perf_counter() + limits.max_ms / 1000.0
@@ -341,8 +348,13 @@ class Runner:
                 why=choice.why or f"decider reported {choice.finish}",
             )
 
-        claims = tuple(choice.says) or task.checks
-        checked = self.verifier.confirm(task=task, view=view, claims=claims)
+        # Every acceptance criterion, never the subset the decider nominated.
+        # ``choice.says`` is the decider's own statement of what it believes and is
+        # recorded in the trace, but it is not the question: a claim is not allowed to
+        # choose what gets checked, or an untrusted decider (a model) could name one
+        # easy criterion, have that confirmed, and reach DONE with the real ones never
+        # looked at. Naming a subset does not narrow this; it only shows up in the trace.
+        checked = self.verifier.confirm(task=task, view=view, claims=task.checks)
         missing = [c.check for c in checked if not c.ok]
         if missing:
             return step, self._stop(

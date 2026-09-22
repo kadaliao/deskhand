@@ -193,6 +193,25 @@ class Target:
         return out
 
 
+def _flag(value: object) -> str:
+    """``1`` or ``0`` for a boolean-ish flag, including the tri-state ``None``.
+
+    A digest row is text, so the flag is written as text here rather than converted
+    through ``int()`` and then formatted back. Same bytes either way; it says what the
+    row means.
+    """
+    return "1" if value else "0"
+
+
+def _cell(value: float) -> str:
+    """A coordinate's grid cell, as text.
+
+    Bucketing here is what stops sub-pixel jitter from registering as the desktop
+    having changed, so it is part of the digest's meaning rather than formatting.
+    """
+    return f"{value // GRID:.0f}"
+
+
 def _identity_row(target: Target) -> str:
     """What is here and what it says. No geometry, no focus.
 
@@ -203,21 +222,21 @@ def _identity_row(target: Target) -> str:
     """
     return (
         f"{target.kind}|{norm_text(target.label)}|{norm_text(str(target.value))}"
-        f"|{int(target.enabled)}|{target.source}|{int(bool(target.selected))}"
+        f"|{_flag(target.enabled)}|{target.source}|{_flag(target.selected)}"
     )
 
 
 def _shape_row(target: Target) -> str:
     return (
-        f"{target.kind}|{norm_text(target.label)}|{int(target.enabled)}"
-        f"|{target.source}|{int(bool(target.selected))}"
+        f"{target.kind}|{norm_text(target.label)}|{_flag(target.enabled)}"
+        f"|{target.source}|{_flag(target.selected)}"
     )
 
 
 def _place_row(target: Target) -> str:
     box = target.box
-    place = "no-box" if box is None else f"{int(box.x // GRID)},{int(box.y // GRID)}"
-    return f"{place}|{int(target.focused)}"
+    place = "no-box" if box is None else f"{_cell(box.x)},{_cell(box.y)}"
+    return f"{place}|{_flag(target.focused)}"
 
 
 def structure_digest(targets: tuple[Target, ...]) -> str:
@@ -373,8 +392,10 @@ class Task:
 class Choice:
     """What a decider returned: one verb, or a claim that we are finished.
 
-    ``says`` carries the checks the decider believes are satisfied. A claim is
-    only a claim; a Verifier has to confirm it before the run may report DONE.
+    ``says`` carries the checks the decider asserts are satisfied. It is recorded
+    in the trace and it is deliberately *not* what the verifier is asked about: a
+    claim that DONE is true means every ``Task.checks`` criterion, so naming one
+    criterion -- or an easier one -- cannot narrow what has to be confirmed.
     """
 
     verb: Verb | None = None

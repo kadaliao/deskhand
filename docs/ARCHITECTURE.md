@@ -13,7 +13,14 @@
                v              v
         +-------------+   +----------------+
         |   Decider   |   |   Verifier     |  confirms a DONE claim; refuses by default
-        +-------------+   +----------------+
+        +------+------+   +--------+-------+
+               |                   |
+               |  ask / one JSON   |  ask / one JSON  (separate transports on purpose)
+               v                   v
+        +--------------------------------+
+        |             Model              |  one prompt -> one JSON object
+        |  FakeModel   |   CommandModel  |  no vendor, no key, no HTTP client here
+        +--------------------------------+
                ^
                |  View(changed? what does it say?)
         +------+------------------------------------------+
@@ -39,9 +46,11 @@ These are the properties worth defending. Each one has a test.
 2. **A decider cannot invent a target, a verb, or a literal.**
    Targets must exist in the live view, verbs must be advertised by the target,
    and values must be a key in `Task.inputs` (`validate.py`).
-3. **A decider cannot confirm its own work.**
-   `NoVerifier` returns "unverified" for every claim, which escalates
-   (`verify.py`, `test_runner.py`).
+3. **A decider cannot confirm its own work, and does not choose what is checked.**
+   `NoVerifier` returns "unverified" for every claim, and a claim of `DONE` is
+   verified against every `Task.checks` criterion rather than the subset the decider
+   nominated: `choice.says` is recorded in the trace and never asked about
+   (`verify.py`, `runner.py::_terminal`, `test_runner.py`).
 4. **No failure ends the run by itself.**
    Decider exceptions, invalid choices, stale targets, unsupported actions:
    counted, recorded with a reason, budgeted (`runner.py`).
@@ -56,15 +65,26 @@ These are the properties worth defending. Each one has a test.
 8. **The cheap signal is used for waiting, the expensive one for deciding.**
    Settling probes accessibility structure only; the screenshot and recognition
    pass happen once, after the desktop is quiet (`screen.py::settle`).
-9. **Importing the package never imports a framework.** Every pyobjc import is
+9. **A decider that asks a model still cannot ask for a coordinate click.** The
+   reply is data from an untrusted source, so it goes through `json_io` (unknown
+   fields and wrongly typed fields refused), `Choice` (exactly one verb, or one
+   claim of finished), and `build_action` (the id must exist, the verb must be
+   advertised, a literal must come from `Task.inputs`). A prompt that says "do not
+   use coordinates" is not one of those layers (`model.py`, `deciders/llm.py`).
+10. **Verification cannot see the decision.** `ModelVerifier` is handed the task,
+   the live view and the claims -- never the decider's rationale, its action or
+   its steps -- and asks one question per claim, so a set of claims cannot be
+   confirmed by a single answer (`verify.py`, `test_model_verifier.py`).
+11. **Importing the package never imports a framework.** Every pyobjc import is
    inside a function, which is what makes the pixel geometry and the whole loop
    testable off a Mac.
 
 ## Data flow of one step
 
-```
+```text
 1  observe         AX targets -> OCR targets -> fuse (hit test) -> View
 2  decide          Decider sees Task + View + previous Steps  -> Choice
+                   (RuleDecider, ScriptedDecider, or LLMDecider over a Model)
 3  validate        Choice -> Action, with freshness guards
 4  aim             Sensor.is_stale(View, Action)?  -> re-observe and decide again
 5  act             Sensor.act(View, Action) -> route name ("ax-press", "click", ...)
@@ -90,6 +110,7 @@ checks, and why the run stopped.
 | seam | `Sensor` | `observe`, `is_stale`, `act`, `settle` |
 | seam | `Decider` | `choose(task, view, steps) -> Choice` |
 | seam | `Verifier` | `confirm(task, view, claims) -> CheckResult[]` |
+| seam | `Model` | one prompt -> one JSON object: `ask(system, prompt)`, `name` |
 | control | `Runner` | `steps()` yields, `run()` returns a `Report` |
 
 Ten verbs, and that is the whole action space: `PRESS`, `OPEN`, `MENU`, `TYPE`,
@@ -115,11 +136,12 @@ src/deskhand/
   fusion.py         dedupe + the pixel-into-accessibility rule
   validate.py       Choice -> Action, and every reason to refuse
   runner.py         the loop
-  verify.py         NoVerifier, PredicateVerifier
+  model.py          the model seam: Model, FakeModel, CommandModel, model_from_env
+  verify.py         NoVerifier, PredicateVerifier, ModelVerifier
   json_io.py        the strict JSON boundary
-  demo.py           a scripted desktop and a deliberately wrong first choice
+  demo.py           a scripted desktop, a deliberately wrong first choice, and M2's shape
   cli.py            demo, ax, probe, doctor, run
-  deciders/         rule.py, scripted.py
+  deciders/         rule.py, scripted.py, llm.py
   sensors/
     fake.py         a deterministic desktop (self-checking tests)
     macos/

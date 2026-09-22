@@ -189,12 +189,55 @@ recorded per frame — which `deskhand stability` now does.
   written before any of this was measured, and it should be re-written as "every
   coordinate click is counted and explained".
 
+## The pixel path, now that Screen Recording is granted
+
+The section below used to open with "the pixel path at all" as *not measured*, because
+macOS refuses to prompt for Screen Recording from a command line process. It has since
+been granted, and the first measurements are in. All of them are one observation of the
+frontmost window on a `zh-Hans` macOS:
+
+| Window | semantic | recognised | absorbed | left as pixels | `hits` | ms |
+|---|---|---|---|---|---|---|
+| System Settings (`--pixels`) | 104 | 15 | **15** | **0** | 15 | 912 |
+| Finder Quick Look (`--pixels`) | 60 | 30 | **30** | **0** | 29 | — |
+
+Two things are worth more than the numbers:
+
+**The fusion invariant holds on real hardware.** Every recognised region resolved to an
+accessibility element, twice over, on two different windows -- `absorbed == recognised`
+and `visual kept == 0` in both. So with a real screenshot and a real Vision pass, a pixel
+region that lands on a control does not survive as a second target; it becomes another
+name for the control. That was an invariant of `fusion.py` and is now a measurement.
+
+**`pixels="auto"` skips the overlay on exactly the window that needs it.** On Finder the
+same window observed twice:
+
+| Flag | semantic | `pixels_used` | recognised | absorbed |
+|---|---|---|---|---|
+| `--pixels` | 60 | `True` | 30 | **30** |
+| (auto) | 60 | `False` | 0 | 0 |
+
+`_want_pixels` is `semantic < rich_at` with `rich_at = 40`, so 60 targets means "this
+window is described richly enough" and the screenshot never happens. The heuristic uses
+the *number* of targets as a proxy for how well they are described, and System Settings
+is the counterexample that matters most to this project: **104 targets, and 27 of them are
+`row:outlinerow` sidebar rows with 198x32 geometry and no name at all.** More targets than
+almost any window, and precisely the ones a task needs are the ones with nothing to match
+on.
+
+That is now measurable rather than arguable because `--pixels` forces the overlay. It does
+not settle what the heuristic should be: "many targets with no labels" is the signal the
+count is standing in for, and deciding that needs its own measurement.
+
 ## Not measured
 
-- **The pixel path at all.** Screen Recording is not granted on the measuring
-  machine, and macOS refuses to prompt for it from a command line process, so the
-  screenshot, the recognition pass, the hit test and region caching are all
-  unverified. Every number above is from `--no-pixels` runs.
+- Region-scoped recognition: the current pass recognises the whole window image, so the
+  912 ms above is the cost of a full-window Vision pass and not a floor.
+- Whether the pixel-derived names are *useful*. The 15 regions absorbed on System
+  Settings included heavy garbling (`'Liquffj Glas5'`, `'o*&*'`) and **none of them named
+a sidebar row**, which is the specific thing M1's revised acceptance asks for. The
+  invariant that a region becomes a name is verified; the claim that the names are the
+  right ones is not.
 - A second display, a non-Chinese interface, or a window larger than one screen.
 - Long-run stability: no measurement has been taken over hundreds of steps, so
   nothing here says anything about leaks, memory growth, or drift in the

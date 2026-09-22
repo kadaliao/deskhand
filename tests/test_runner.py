@@ -22,7 +22,7 @@ from deskhand.types import (
     View,
 )
 from deskhand.validate import build_action
-from deskhand.verify import PredicateVerifier
+from deskhand.verify import PredicateVerifier, WaivedVerifier
 
 TASK = Task(goal="press things", checks=("everything pressed",), inputs={"text": "hello"})
 
@@ -118,6 +118,39 @@ class TestCompletionIsNotTheDecidersCall:
         assert "not confirmed" in report.why
         assert [c.ok for c in report.checked] == [False]
 
+    def test_the_decider_does_not_choose_what_gets_checked(self) -> None:
+        """DONE is a claim about every criterion, not about the ones it happened to name."""
+        decider = ScriptedDecider([Choice(finish=Status.DONE, says=("an easier claim",))])
+        verifier = PredicateVerifier({"everything pressed": yes, "an easier claim": yes})
+        report = Runner(sensor=sensor(), decider=decider, verifier=verifier).run(TASK)
+        assert [c.check for c in report.checked] == ["everything pressed"]
+
+    def test_naming_a_subset_does_not_narrow_what_is_verified(self) -> None:
+        task = Task(goal="press things", checks=("one", "two"))
+        decider = ScriptedDecider([Choice(finish=Status.DONE, says=("one",))])
+        report = Runner(
+            sensor=sensor(), decider=decider, verifier=PredicateVerifier({"one": yes, "two": yes})
+        ).run(task)
+        assert [c.check for c in report.checked] == ["one", "two"]
+        assert report.status is Status.DONE
+
+    def test_a_subset_claim_cannot_hide_an_unmet_criterion(self) -> None:
+        """The hole this closes: the decider used to pick which criterion was checked.
+
+        With ``claims = tuple(choice.says) or task.checks``, naming only the criterion
+        that happens to pass reported DONE while the criterion that fails was never
+        looked at. An untrusted decider (a model) makes that reachable.
+        """
+        task = Task(goal="press things", checks=("one", "two"))
+        decider = ScriptedDecider([Choice(finish=Status.DONE, says=("one",))])
+        report = Runner(
+            sensor=sensor(),
+            decider=decider,
+            verifier=PredicateVerifier({"one": yes, "two": lambda t, v: False}),
+        ).run(task)
+        assert report.status is Status.ESCALATE
+        assert "two" in report.why
+
     def test_an_unregistered_check_stays_unverified(self) -> None:
         decider = ScriptedDecider([Choice(finish=Status.DONE, says=("everything pressed",))])
         report = Runner(sensor=sensor(), decider=decider, verifier=PredicateVerifier({})).run(TASK)
@@ -138,6 +171,36 @@ class TestCompletionIsNotTheDecidersCall:
         report = Runner(sensor=sensor(), decider=decider).run(TASK)
         assert report.status is Status.STUCK
         assert report.why == "nothing fits"
+
+
+class TestTheWaiverIsNotAConfirmation:
+    """``--trust-decider`` must read as a waiver, not as a passing check.
+
+    Regression: it seeded a predicate that returned ``True``, so a report said
+    "predicate matched the live view" for a check that nothing performed.
+
+    Measured on a real machine: on a Chinese macOS the appearance task resolved
+    ``外观`` to the settings *window* rather than the sidebar row, coordinate-clicked
+    that window, failed to disambiguate ``深色``, changed nothing, and was reported
+    ``DONE`` with that wording while the machine stayed in Light mode.
+    """
+
+    def test_a_waived_check_does_not_claim_a_match(self) -> None:
+        task = Task(goal="do it", checks=("it is done",))
+        decider = ScriptedDecider([Choice(finish=Status.DONE, says=("it is done",))])
+        report = Runner(sensor=sensor(), decider=decider, verifier=WaivedVerifier()).run(task)
+        how = report.checked[0].how
+        assert report.status is Status.DONE
+        assert report.checked[0].ok is True
+        assert "WAIVED" in how
+        assert "NOT independently checked" in how
+        assert "matched" not in how
+
+    def test_a_waiver_still_covers_every_criterion(self) -> None:
+        task = Task(goal="do it", checks=("one", "two", "three"))
+        decider = ScriptedDecider([Choice(finish=Status.DONE, says=("one",))])
+        report = Runner(sensor=sensor(), decider=decider, verifier=WaivedVerifier()).run(task)
+        assert [c.check for c in report.checked] == ["one", "two", "three"]
 
 
 class TestFailuresAreSurvivable:

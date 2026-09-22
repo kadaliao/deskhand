@@ -44,7 +44,10 @@ def resolve_target(choice: Choice, view: View, *, role: str) -> Target | None:
         if not loose:
             raise BadChoice(f"no {role} matching {label!r} in the current view")
         if len(loose) > 1:
-            names = ", ".join(f"{t.kind}:{t.label}" for t in loose[:4])
+            # Name each candidate by id, because "pick one of these" is only
+            # actionable if the ids are visible: the fix for an ambiguous label is
+            # to choose by id, and this message is fed back to the decider.
+            names = ", ".join(f"{t.kind}:{t.label or t.id} ({t.id})" for t in loose[:4])
             raise BadChoice(f"{role} {label!r} is ambiguous ({len(loose)}): {names}")
         return loose[0]
 
