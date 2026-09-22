@@ -254,6 +254,25 @@ Retina display that halves the pixels handed to Vision, and it showed -- the 1x 
 `Xingyl Llao` where the 2x image read `Xingyi Liao`, and `AppleCare` was legible only at 2x.
 `to_box` derives its scale from the image size, so nothing else had to change.
 
+### `pixels="auto"` was asking the wrong question
+
+The automatic choice was `count(targets) < rich_at`. Counting answers "are there many
+targets"; the question is "how many of them can be matched by a recognisable name".
+Measured on real windows:
+
+| window | targets | unnamed | old rule | new rule |
+|---|---|---|---|---|
+| System Settings (the M1 window) | 104 | 64 (62%) | skip | **use** |
+| a real Google Chrome window | 179 | 135 (75%) | skip | **use** |
+| a window accessibility describes well | 60 | 0 | skip | skip |
+| a small window | 10 | -- | use | use |
+
+"auto" now uses the overlay when at least `unnamed_pct` (25% by default) of the targets
+have no label, so the two windows whose controls are unnamed -- a localised System Settings
+and a Chromium page -- get the pixels they need, and a fully-named window still does not pay
+for them. The Chromium number is worth keeping: **75% of that window's targets had no name
+at all**, which is the M2 thesis in one measurement.
+
 ## Not measured
 
 - Region-scoped recognition: the current pass recognises the whole window image, so the

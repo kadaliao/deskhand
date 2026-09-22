@@ -46,30 +46,37 @@ class MacSensor:
         ocr: OCRSource | None = None,
         pixels: Pixels = "auto",
         rich_at: int = 40,
+        unnamed_pct: int = 25,
         hit_budget: int = 60,
     ) -> None:
         self.ax = ax or AXSource()
         self.ocr = ocr or OCRSource()
         self.pixels = pixels
         self.rich_at = rich_at
+        self.unnamed_pct = unnamed_pct
         self.hit_budget = hit_budget
 
     # ------------------------------------------------------------------ look
 
-    def _want_pixels(self, semantic: int) -> bool:
-        if self.pixels is True:
+    def _want_pixels(self, semantic: tuple[Target, ...]) -> bool:
+        if isinstance(self.pixels, bool):  # True and False are answers; "auto" is not
+            return self.pixels
+        # "auto": a window with few targets is worth a look, and so is a window with many
+        # targets that have no names -- because "richly described" means *nameable*, not
+        # numerous. Counting targets was the wrong proxy, and System Settings is the
+        # counterexample this project keeps tripping over: 104 targets, 64 of them with no
+        # label, 27 of those the sidebar rows a task actually needs. More targets than
+        # almost any window, and precisely the ones that matter have nothing to match on.
+        if not semantic or len(semantic) < self.rich_at:
             return True
-        if self.pixels is False:
-            return False
-        # "auto": if accessibility already describes this window richly, the
-        # screenshot and the recognition pass would mostly be thrown away.
-        return semantic < self.rich_at
+        unnamed = sum(1 for target in semantic if not target.label)
+        return unnamed * 100 >= self.unnamed_pct * len(semantic)
 
     def observe(self) -> View:
         semantic = self.ax.targets()
         if self.ax.frame is None:  # pragma: no cover - targets() always sets it
             raise CannotDo("no frontmost window")
-        return self._fuse(semantic, pixels=self._want_pixels(len(semantic)))
+        return self._fuse(semantic, pixels=self._want_pixels(semantic))
 
     def _fuse(self, semantic: tuple[Target, ...], *, pixels: bool) -> View:
         frame = self.ax.frame
@@ -136,7 +143,7 @@ class MacSensor:
             budget_s=budget_ms / 1000.0,
             start_from=shape_digest(before.targets),
         )
-        view = self._fuse(result.last, pixels=self._want_pixels(len(result.last)))
+        view = self._fuse(result.last, pixels=self._want_pixels(result.last))
         if not result.stable:
             # Say so rather than presenting a half-settled view as a settled one.
             logger.info(
