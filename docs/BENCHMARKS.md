@@ -155,12 +155,18 @@ Ghostty, 9 frames, one second apart:
 ChatGPT (Chromium), 8 frames, one second apart, nobody touching it:
   same window, same shape, 20 targets, 17ms each
   verdict: nothing was disturbing this measurement
+
+X/Twitter (Chromium, a heavy single-page app), 8 frames, a second apart,
+measured over ssh from another machine, nobody touching it:
+  49 targets on every frame, one shape throughout, warm median 87ms
+  verdict: nothing was disturbing this measurement
 ```
 
 The first of those is the point: **one tab switch, by a person, moved the target
 count and the shape of a native application in the middle of a five-frame run.**
-The second is the other half: a Chromium window that nobody is using is perfectly
-steady, and its warm observation costs 17 ms across eight consecutive frames.
+The other two are the counterweight, and they were taken on two different machines:
+a Chromium window nobody is using held an identical shape for eight consecutive
+frames, twice, once at 20 targets and once at 49 on a page as restless as X.
 
 That does not prove the earlier 158/520 alternation was the colleague rather than
 Chromium — the two were entangled at the time and stay entangled now — but it moves
