@@ -139,8 +139,10 @@ src/deskhand/
   model.py          the model seam: Model, FakeModel, CommandModel, model_from_env
   verify.py         NoVerifier, PredicateVerifier, ModelVerifier
   json_io.py        the strict JSON boundary
+  paint.py          terminal colour, only for a terminal; which routes count as semantic
+  report_html.py    a Report.brief() as one self-contained, escaped HTML page
   demo.py           a scripted desktop, a deliberately wrong first choice, and M2's shape
-  cli.py            demo, ax, probe, doctor, run
+  cli.py            demo, ax, probe, doctor, stability, bench, permit, run, report
   deciders/         rule.py, scripted.py, llm.py
   sensors/
     fake.py         a deterministic desktop (self-checking tests)

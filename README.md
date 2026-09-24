@@ -11,6 +11,7 @@ uv run deskhand probe       # the fused view, as the decider sees it
 uv run deskhand ax --grep 外观 --focus 系统设置   # find the right label
 uv run deskhand stability --frames 10        # is this window steady, or is somebody using it?
 uv run deskhand bench                        # what does an observation actually cost?
+uv run deskhand demo --report demo.html      # a run as a self-contained HTML page
 ```
 
 Rehearse before you let it touch anything. `--dry-run` observes once and reports
@@ -100,6 +101,27 @@ hit test.
 Every step records the route it took (`ax-press`, `ax-set-value`, `ax-focus+keys`, `click`,
 `keys`), plus per-phase timings. "0 coordinate clicks" is a measurement here, not a claim.
 
+## Reading a run
+
+Every run prints its trace, and the last lines count how it acted -- through accessibility,
+or by aiming the mouse at a point. In a terminal, refusals are red and coordinate clicks
+are yellow; piped or captured output stays plain, and `NO_COLOR` is honoured.
+
+A run can also be kept as one self-contained HTML page: status and checks first, every
+step with its route and a look / decide / act / settle bar, and the final view as a
+filterable table of targets. It loads nothing from the network, so it can be attached to
+an issue or archived next to the task file.
+
+```bash
+uv run deskhand demo --report demo.html                        # the scripted run, as a page
+uv run deskhand run --task examples/appearance.json --report run.html
+uv run deskhand run --task examples/appearance.json --json > run.json
+uv run deskhand report run.json                                # a saved report, later
+```
+
+Everything on the page that came from the desktop or from a model -- a window title, a
+model's `why` -- is escaped, because it is untrusted text.
+
 ## Letting a model decide
 
 The deciders above are deterministic, which is right for testing and wrong for general use.
@@ -112,6 +134,9 @@ uv run deskhand run --task examples/appearance.json --model --dry-run   # ask on
 uv run deskhand run --task examples/appearance.json --model            # let it act
 uv run --no-sync python examples/model_run.py         # M2's scenario, on a scripted desktop
 ```
+
+A model decision takes seconds, not milliseconds (9-33 s measured), so with `--model` a
+`max_ms` too small for `max_steps` of those is raised, and the new budget is printed.
 
 The command reads the prompt on stdin and must write one JSON object to stdout, so whatever
 already holds the key keeps holding it. Two commands are started per run on purpose: a

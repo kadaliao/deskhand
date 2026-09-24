@@ -579,6 +579,7 @@ class Report:
         return {
             "status": str(self.status),
             "why": self.why,
+            "task": self.task.brief(),
             "steps_taken": self.steps_taken,
             "checks": [c.brief() for c in self.checked],
             "steps": [s.brief() for s in self.steps],

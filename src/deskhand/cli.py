@@ -8,15 +8,17 @@ tells you how much of the current app accessibility can actually describe.
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import sys
 import time
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
-from . import demo, json_io
+from . import demo, json_io, paint
 from .deciders.llm import LLMDecider
 from .deciders.scripted import ScriptedDecider
 from .errors import DeskhandError
@@ -38,7 +40,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="deskhand", description="A hand for desktop agents.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("demo", help="run the scripted desktop end to end (no permissions needed)")
+    demo_cmd = sub.add_parser(
+        "demo", help="run the scripted desktop end to end (no permissions needed)"
+    )
+    _report_flag(demo_cmd)
+
+    report_cmd = sub.add_parser(
+        "report", help="turn a saved `run --json` report into a self-contained HTML page"
+    )
+    report_cmd.add_argument("trace", help="a JSON report, as printed by `run --json`")
+    report_cmd.add_argument(
+        "-o", "--out", default=None, help="where to write the page (default: next to the trace)"
+    )
 
     ax_cmd = sub.add_parser("ax", help="dump accessibility targets for the frontmost app")
     _output_flags(ax_cmd)
@@ -87,6 +100,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run = sub.add_parser("run", help="run a task file against the real desktop")
     run.add_argument("--task", required=True, help="JSON task, optionally with a steps script")
     run.add_argument("--json", action="store_true")
+    _report_flag(run)
     _pixel_flags(run)
     run.add_argument(
         "--focus",
@@ -113,6 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     handlers = {
         "demo": _demo,
+        "report": _report,
         "ax": _ax,
         "probe": _probe,
         "doctor": _doctor,
@@ -303,12 +318,53 @@ def _output_flags(parser: argparse.ArgumentParser) -> None:
 
 
 def _demo(args: argparse.Namespace) -> int:
-    del args
     sensor = demo.sensor()
     runner = Runner(sensor=sensor, decider=demo.script(), verifier=demo.verifier())
     report = runner.run(demo.task())
     _print_report(report, json_output=False)
+    _save_html(report.brief(), args.report, json_output=False)
     return OK if report.status is Status.DONE else FAILED
+
+
+# --------------------------------------------------------------------------- #
+# report
+# --------------------------------------------------------------------------- #
+
+
+def _report_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--report",
+        metavar="PATH",
+        default=None,
+        help="also write the run as a self-contained HTML page",
+    )
+
+
+def _report(args: argparse.Namespace) -> int:
+    source = Path(args.trace)
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"no report at {source}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{source} is not a JSON report: {exc}") from exc
+    if not isinstance(payload, dict) or "steps" not in payload or "status" not in payload:
+        raise ValueError(f"{source} is not a deskhand report (expected `run --json` output)")
+    out = args.out or str(source.with_suffix(".html"))
+    _save_html(payload, out, json_output=False)
+    return OK
+
+
+def _save_html(payload: dict[str, Any], path: str | None, *, json_output: bool) -> None:
+    """Write the page, and say where -- on stderr when stdout is machine-readable."""
+    if not path:
+        return
+    from .report_html import render
+
+    target = Path(path)
+    target.write_text(render(payload), encoding="utf-8")
+    sink = sys.stderr if json_output else sys.stdout
+    print(f"report: {target.resolve()}", file=sink)
 
 
 # --------------------------------------------------------------------------- #
@@ -592,6 +648,7 @@ def _run(args: argparse.Namespace) -> int:
     runner = Runner(sensor=sensor, decider=decider, verifier=verifier)
     report = runner.run(task)
     _print_report(report, json_output=args.json)
+    _save_html(report.brief(), args.report, json_output=args.json)
     return OK if report.status is Status.DONE else FAILED
 
 
@@ -636,39 +693,55 @@ def _print_targets(targets: Sequence[Any], limit: int) -> None:
 
 
 def _print_rehearsal(rehearsal: Rehearsal) -> None:
-    print("rehearsal against the current view -- nothing was executed")
+    on = paint.enabled()
+    print(paint.paint("rehearsal against the current view -- nothing was executed", "dim", on=on))
     print(f"view: app={rehearsal.app} window={rehearsal.window!r}")
     for finding in rehearsal.findings:
-        mark = "ok  " if finding.ok else "FAIL"
+        mark = paint.paint("ok  ", "ok", on=on) if finding.ok else paint.paint("FAIL", "bad", on=on)
         print(f"{finding.n:>3} {mark} {finding.what:<28} {finding.detail}")
-    print(f"\nverdict: {rehearsal.verdict}")
+    verdict = paint.paint(rehearsal.verdict, "bad" if rehearsal.first_blocked else "ok", on=on)
+    print(f"\nverdict: {verdict}")
 
 
 def _print_report(report: Report, *, json_output: bool) -> None:
     if json_output:
         print(json_io.dump(json_io.report_to_dict(report)))
         return
+    on = paint.enabled()
+    print(paint.paint(f"task: {report.task.goal}", "head", on=on))
     for step in report.steps:
-        _print_step(step)
-    print(f"\nstatus: {report.status}  steps: {report.steps_taken}  why: {report.why}")
+        _print_step(step, on=on)
+    status = paint.paint(str(report.status), paint.status_role(str(report.status)), on=on)
+    print(f"\nstatus: {status}  steps: {report.steps_taken}  why: {report.why}")
     for check in report.checked:
-        print(f"  check {'ok ' if check.ok else 'NO '} {check.check}  ({check.how})")
+        mark = paint.paint("ok ", "ok", on=on) if check.ok else paint.paint("NO ", "bad", on=on)
+        print(f"  check {mark} {check.check}  ({check.how})")
     if report.steps:
         routes: dict[str, int] = {}
         for step in report.steps:
             if step.via:
                 routes[step.via] = routes.get(step.via, 0) + 1
         print(f"  routes: {routes or 'none'}")
+        acted = sum(routes.values())
+        semantic = sum(n for via, n in routes.items() if paint.semantic(via))
+        aimed = sum(n for via, n in routes.items() if via in paint.COORDINATE_ROUTES)
+        total = sum(step.times.total for step in report.steps)
+        line = (
+            f"  acted {acted}x: {semantic} through accessibility, "
+            f"{aimed} coordinate click{'s' if aimed != 1 else ''}; {total}ms in all"
+        )
+        print(paint.paint(line, "warn" if aimed else "dim", on=on))
 
 
-def _print_step(step: Step) -> None:
+def _print_step(step: Step, *, on: bool = False) -> None:
     choice = step.choice.brief() if step.choice else {}
     label = step.target_label or choice.get("target_label") or ""
     times = f"{step.times.total:>5}ms"
     phases = step.times
     detail = f"look={phases.look} decide={phases.decide} act={phases.act} settle={phases.settle}"
     if step.failed:
-        print(f"{step.n:>3} {times} FAIL {step.failed}: {step.why}")
+        fail = paint.paint(f"FAIL {step.failed}:", "bad", on=on)
+        print(f"{step.n:>3} {times} {fail} {step.why}")
         return
     what = str(choice.get("verb") or choice.get("finish"))
     if not label:
@@ -679,11 +752,18 @@ def _print_step(step: Step) -> None:
         )
     if step.action is None:
         # A finish step: nothing was acted on, so movement would be noise.
-        print(f"{step.n:>3} {times} {what:<8} {'':<24} {step.why}")
+        finish = paint.paint(f"{what:<8}", paint.status_role(what), on=on)
+        print(f"{step.n:>3} {times} {finish} {'':<24} {step.why}")
         return
     moved = "changed" if step.changed else "still  "
     moved += " progress" if step.progress else " no-progress"
-    print(f"{step.n:>3} {times} {what:<8} {label:<24} via={step.via or '-':<16} {moved}  {detail}")
+    via = paint.paint(f"via={step.via or '-':<16}", paint.route_role(step.via), on=on)
+    if not step.progress:
+        moved = paint.paint(moved, "warn", on=on)
+    print(
+        f"{step.n:>3} {times} {paint.paint(f'{what:<8}', 'bold', on=on)} {label:<24} "
+        f"{via} {moved}  {paint.paint(detail, 'dim', on=on)}"
+    )
 
 
 def _print_doctor(report: dict[str, Any], as_json: bool) -> None:
