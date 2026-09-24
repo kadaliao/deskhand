@@ -337,7 +337,7 @@ End to end, `MacSensor` pinned to the window, `pixels=True`, three observations 
 
 On one pair of Ghostty images, a crop of 3% took 220 ms against 912-928 ms for reading the
 same second image whole; 40 of 41 texts matched. The differences were Vision spelling the
-same unchanged pixels differently on two passes (`tiaoxingyi` / `liaoxingyi`), not text
+same unchanged pixels differently on two passes (one letter of a path, `t` against `l`), not text
 missed -- and keeping a reading while its pixels stay put also keeps a pixel target's id,
 which is derived from its words, steady from one frame to the next.
 

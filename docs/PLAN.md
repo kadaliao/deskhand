@@ -325,8 +325,8 @@ installed on this machine), `--pixels --focus`, with the person's consent to sou
   takes no verb, now stay pixel targets (`fusion.over_container`: 43 on that window), and
   where a pixel word shares a name with an accessibility control, the control wins.
 - **The pixel path works, and every coordinate action is counted.** Open 我喜欢的音乐
-  (`click`), then `OPEN` 放弃幻想 准备战斗 (`double-click`, 2090 ms): the now-playing bar
-  then read `放弃幻想 准备战斗 / 舒光浩`. Paused with `KEY SPACE` (`key`), confirmed by the
+  (`click`), then `OPEN` on one track of that list (`double-click`, 2090 ms): the
+  now-playing bar then read that track's title and artist. Paused with `KEY SPACE` (`key`), confirmed by the
   app's native menu bar, which says 播放 once paused. Two coordinate actions, both counted.
 - **What deskhand cannot do on such an app**: type. `TYPE` needs a text target, and a
   pixel target does not offer it, so search is out of reach without a model-free way to
