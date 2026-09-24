@@ -21,6 +21,7 @@ macos = [
   "pyobjc-framework-ApplicationServices>=11",
   "pyobjc-framework-Cocoa>=11",
   "pyobjc-framework-Quartz>=11",
+  "pyobjc-framework-ScreenCaptureKit>=11",
   "pyobjc-framework-Vision>=11",
 ]
 dev = [
@@ -74,5 +75,8 @@ strict = true
 warn_unreachable = true
 
 [[tool.mypy.overrides]]
-module = ["ApplicationServices.*", "AppKit.*", "Quartz.*", "Vision.*", "objc.*", "Foundation.*"]
+module = [
+  "ApplicationServices.*", "AppKit.*", "Quartz.*", "Vision.*", "objc.*", "Foundation.*",
+  "ScreenCaptureKit.*",
+]
 ignore_missing_imports = true

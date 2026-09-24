@@ -448,7 +448,12 @@ Still open in M3, in the order the measurements now justify them:
    | accessibility walk alone (cold, pays the lazy tree build once per process) | 319 |
 
    `CGWindowListCreateImage` is deprecated but still present on this macOS, so
-   `ScreenCaptureKit` removes a future cliff. Region-scoped recognition removes a present
+   `ScreenCaptureKit` removes a future cliff. **Done 2026-09-24 as a fallback**: the legacy
+   call stays first (38-47 ms a window), ScreenCaptureKit takes over when it is gone
+   (268 ms first, 107-109 ms after, same pixels), and `DESKHAND_CAPTURE=sck` forces it.
+   While preparing that, a newly started process lost window capture until the person
+   toggled the terminal's Screen Recording switch; the cause was not established, and the
+   one real ScreenCaptureKit capture afterwards left the legacy path working. Region-scoped recognition removes a present
    cost, and it is the one worth doing first.
 
    **Tried 2026-09-24, and the obvious version is wrong** (BENCHMARKS, "Region-scoped

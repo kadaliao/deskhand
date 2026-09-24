@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import threading
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -283,20 +285,24 @@ def window_box_of(pid: int, title: str = "") -> Box | None:
     return None if picked is None else picked[2]
 
 
+CAPTURE_ENV = "DESKHAND_CAPTURE"
+"""``sck`` forces the ScreenCaptureKit path; anything else uses it only as a fallback."""
+
+SCK_TIMEOUT_S = 5.0
+
+
 def _capture(window_id: int) -> Any:
     """Screenshot one window.
 
-    ``CGWindowListCreateImage`` is deprecated on modern macOS; ScreenCaptureKit
-    is the replacement and is on the roadmap. Capturing a single window (rather
-    than the display) keeps occluded windows readable and keeps the permission
-    surface at Screen Recording only.
+    ``CGWindowListCreateImage`` is deprecated but present on this macOS (26.7) and costs
+    38 ms here, so it is still the first choice. ScreenCaptureKit is the fallback for the
+    macOS that removes it, and ``DESKHAND_CAPTURE=sck`` forces it so that path can be
+    exercised before it is needed. Capturing a single window (rather than the display)
+    keeps occluded windows readable and keeps the permission surface at Screen Recording.
     """
     quartz = _quartz()
-    if not hasattr(quartz, "CGWindowListCreateImage"):
-        raise CannotDo(
-            "this macOS/pyobjc build no longer exposes CGWindowListCreateImage; "
-            "the ScreenCaptureKit backend is required"
-        )
+    if os.environ.get(CAPTURE_ENV) == "sck" or not hasattr(quartz, "CGWindowListCreateImage"):
+        return _capture_sck(window_id)
     options = quartz.kCGWindowImageBoundsIgnoreFraming
     # Native resolution, not nominal. On a Retina display the nominal capture is half the
     # pixels, and that is visible in the recognition: the 1x image read `Xingyl Llao` where
@@ -312,6 +318,72 @@ def _capture(window_id: int) -> Any:
     if image is None:
         raise NoPermission("could not capture the window; check Screen Recording permission")
     return image
+
+
+def _capture_sck(window_id: int, *, timeout_s: float = SCK_TIMEOUT_S) -> Any:
+    """The same window through ScreenCaptureKit (macOS 14+), at the display's pixel scale.
+
+    Its calls answer through completion handlers on a queue of their own, so this waits on
+    an event with a timeout instead of needing a run loop -- a command line process has
+    none, which is also why ``NSWorkspace`` goes stale here.
+    """
+    try:
+        import ScreenCaptureKit as sck
+    except ImportError as exc:
+        raise CannotDo(
+            "CGWindowListCreateImage is gone and pyobjc ScreenCaptureKit is not installed; "
+            "install the macos extra"
+        ) from exc
+
+    content = _await(
+        lambda done: (
+            sck.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(
+                True, True, done
+            )
+        ),
+        timeout_s,
+        "listing shareable windows",
+    )
+    window = next((w for w in content.windows() if w.windowID() == window_id), None)
+    if window is None:
+        raise CannotDo(f"ScreenCaptureKit does not list window {window_id}")
+    content_filter = sck.SCContentFilter.alloc().initWithDesktopIndependentWindow_(window)
+    config = sck.SCStreamConfiguration.alloc().init()
+    scale = (
+        float(content_filter.pointPixelScale())
+        if hasattr(content_filter, "pointPixelScale")
+        else 2.0
+    )
+    frame = window.frame()
+    config.setWidth_(max(1, round(frame.size.width * scale)))
+    config.setHeight_(max(1, round(frame.size.height * scale)))
+    config.setShowsCursor_(False)
+    return _await(
+        lambda done: (
+            sck.SCScreenshotManager.captureImageWithFilter_configuration_completionHandler_(
+                content_filter, config, done
+            )
+        ),
+        timeout_s,
+        "capturing the window",
+    )
+
+
+def _await(start: Any, timeout_s: float, what: str) -> Any:
+    """Call ``start(handler)`` and wait for ``handler(result, error)``."""
+    finished = threading.Event()
+    answer: dict[str, Any] = {}
+
+    def handler(result: Any, error: Any) -> None:
+        answer["result"], answer["error"] = result, error
+        finished.set()
+
+    start(handler)
+    if not finished.wait(timeout_s):
+        raise CannotDo(f"ScreenCaptureKit did not answer within {timeout_s:.0f}s while {what}")
+    if answer.get("error") is not None or answer.get("result") is None:
+        raise NoPermission(f"ScreenCaptureKit refused {what}: {answer.get('error')}")
+    return answer["result"]
 
 
 def snapshot(
