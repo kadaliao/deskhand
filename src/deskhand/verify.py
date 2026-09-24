@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 
+from .fingerprint import norm_text
 from .model import Model
-from .types import CheckResult, Task, View
+from .protocols import Verifier
+from .types import CheckResult, Target, Task, View
 
 Check = Callable[[Task, View], bool]
 """A predicate over the live view, one per acceptance criterion."""
@@ -76,6 +79,131 @@ class PredicateVerifier:
                 )
             )
         return tuple(results)
+
+
+# --------------------------------------------------------------------------- #
+# declared in the task file
+# --------------------------------------------------------------------------- #
+
+Scalar = str | int | float | bool
+
+
+@dataclass(frozen=True, slots=True)
+class Expectation:
+    """What the live view must show for one check to hold, declared as data.
+
+    A predicate needs Python; a task file does not have any. Without this, a scripted run
+    from a task file could only end one of two dishonest ways: ESCALATE on every success,
+    or DONE on the decider's word (``--trust-decider``). Declaring the state -- "the
+    control named Dark is selected" -- lets the file say what it means by done, and the
+    check runs against the view like any predicate.
+    """
+
+    label: str
+    kind: str | None = None
+    selected: bool | None = None
+    value: Scalar | None = None
+    enabled: bool | None = None
+    focused: bool | None = None
+    absent: bool = False
+
+    def describe(self) -> str:
+        subject = f"{self.kind + ' ' if self.kind else ''}{self.label!r}"
+        if self.absent:
+            return f"nothing named {subject}"
+        wanted = [f"{name}={value}" for name, value in self._states()]
+        return f"{subject}" + (f" with {', '.join(wanted)}" if wanted else " present")
+
+    def _states(self) -> list[tuple[str, Scalar]]:
+        states: list[tuple[str, Scalar]] = []
+        for name in ("selected", "value", "enabled", "focused"):
+            value = getattr(self, name)
+            if value is not None:
+                states.append((name, value))
+        return states
+
+    def _named(self, target: Target) -> bool:
+        wanted = norm_text(self.label)
+        if not wanted:
+            return False
+        if norm_text(target.label) != wanted and wanted not in norm_text(target.spoken()):
+            return False
+        if self.kind is None:
+            return True
+        return target.kind == self.kind or target.kind.startswith(self.kind + ":")
+
+    def _holds(self, target: Target) -> bool:
+        for name, wanted in self._states():
+            actual = getattr(target, name)
+            if name == "selected":
+                actual = actual is True
+            if actual == wanted:
+                continue
+            if name == "value" and norm_text(str(actual)) == norm_text(str(wanted)):
+                continue
+            return False
+        return True
+
+    def judge(self, view: View) -> tuple[bool, str]:
+        named = [t for t in view.targets if self._named(t)]
+        if self.absent:
+            if not named:
+                return True, f"no target named {self.label!r} in the view"
+            return False, f"{_state_of(named[0])} is still there"
+        if not named:
+            return False, f"no target named {self.label!r} in the view"
+        for target in named:
+            if self._holds(target):
+                return True, f"{_state_of(target)} matches {self.describe()}"
+        seen = "; ".join(_state_of(t) for t in named[:3])
+        return False, f"wanted {self.describe()}, found {seen}"
+
+
+def _state_of(target: Target) -> str:
+    parts = [f"{target.kind} {target.label or target.spoken()!r} ({target.id})"]
+    if target.selected is not None:
+        parts.append(f"selected={target.selected}")
+    if target.value not in (None, ""):
+        parts.append(f"value={target.value}")
+    if not target.enabled:
+        parts.append("enabled=False")
+    if target.focused:
+        parts.append("focused=True")
+    return " ".join(parts)
+
+
+class ExpectVerifier:
+    """Confirms the checks a task file declares; hands the rest to ``fallback``, or refuses.
+
+    A check with no expectation and no fallback comes back unconfirmed, like any other
+    verifier's uncovered claim: partial coverage stays visible instead of passing.
+    """
+
+    def __init__(
+        self, expect: Mapping[str, Expectation], *, fallback: Verifier | None = None
+    ) -> None:
+        self._expect = dict(expect)
+        self._fallback = fallback
+
+    def covers(self, claim: str) -> bool:
+        return claim in self._expect or self._fallback is not None
+
+    def confirm(self, *, task: Task, view: View, claims: Sequence[str]) -> tuple[CheckResult, ...]:
+        results: dict[str, CheckResult] = {}
+        rest = [claim for claim in claims if claim not in self._expect]
+        for claim in claims:
+            expectation = self._expect.get(claim)
+            if expectation is not None:
+                ok, how = expectation.judge(view)
+                results[claim] = CheckResult(claim, ok, how)
+        if rest and self._fallback is not None:
+            for result in self._fallback.confirm(task=task, view=view, claims=rest):
+                results[result.check] = result
+        return tuple(
+            results.get(claim)
+            or CheckResult(claim, False, "no expectation declared for this check")
+            for claim in claims
+        )
 
 
 # --------------------------------------------------------------------------- #

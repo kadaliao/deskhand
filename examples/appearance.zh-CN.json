@@ -1,15 +1,42 @@
 {
   "goal": "把 macOS 外观切换为深色 (switch the macOS appearance to Dark)",
-  "checks": ["外观为深色 (Appearance is Dark)"],
+  "checks": [
+    "外观为深色 (Appearance is Dark)"
+  ],
+  "expect": {
+    "外观为深色 (Appearance is Dark)": {
+      "label": "深色",
+      "selected": true
+    }
+  },
   "notes": [
     "标签是本地化的：这个文件用简体中文界面写，英文界面请用 appearance.json。",
     "侧边栏那一行在辅助功能里没有名字，只能靠识别出来的文字命名。",
     "只允许改这一项设置。"
   ],
-  "limits": { "max_steps": 8, "max_ms": 40000, "settle_ms": 2500, "no_progress_steps": 3 },
+  "limits": {
+    "max_steps": 8,
+    "max_ms": 40000,
+    "settle_ms": 2500,
+    "no_progress_steps": 3
+  },
   "steps": [
-    { "verb": "PRESS", "target_label": "外观", "why": "打开外观面板" },
-    { "verb": "PRESS", "target_label": "深色", "why": "选择深色" },
-    { "finish": "DONE", "says": ["外观为深色 (Appearance is Dark)"], "why": "深色选项已选中" }
+    {
+      "verb": "PRESS",
+      "target_label": "外观",
+      "why": "打开外观面板"
+    },
+    {
+      "verb": "PRESS",
+      "target_label": "深色",
+      "why": "选择深色"
+    },
+    {
+      "finish": "DONE",
+      "says": [
+        "外观为深色 (Appearance is Dark)"
+      ],
+      "why": "深色选项已选中"
+    }
   ]
 }

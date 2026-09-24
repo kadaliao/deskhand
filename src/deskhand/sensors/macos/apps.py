@@ -68,6 +68,58 @@ def _as_int(value: object) -> int:
     return value if isinstance(value, int) else 0
 
 
+def on_screen() -> list[tuple[str, int]]:
+    """Applications with a normal window on screen, front to back, one entry each.
+
+    From the window server, for the same reason as ``frontmost``: it is a fresh query, and
+    it is what the console offers as "applications you can look at without taking focus".
+    """
+    try:
+        quartz = _quartz()
+        windows = (
+            quartz.CGWindowListCopyWindowInfo(
+                quartz.kCGWindowListOptionOnScreenOnly | quartz.kCGWindowListExcludeDesktopElements,
+                quartz.kCGNullWindowID,
+            )
+            or []
+        )
+    except Exception:
+        return []
+    seen: dict[int, str] = {}
+    for window in windows:
+        if _as_int(window.get(quartz.kCGWindowLayer)) != 0:
+            continue
+        pid = _as_int(window.get(quartz.kCGWindowOwnerPID))
+        if pid > 0 and pid not in seen:
+            seen[pid] = str(window.get(quartz.kCGWindowOwnerName) or "?")
+    return [(name, pid) for pid, name in seen.items()]
+
+
+def find(name: str) -> tuple[str, int] | None:
+    """An application by name, preferring one with a window on screen.
+
+    Exact name first, then a substring, the same order ``focus`` uses, so the application
+    a person names is the one both of them mean.
+    """
+    wanted = name.strip().casefold()
+    if not wanted:
+        return None
+    visible = on_screen()
+    for match in (
+        lambda seen: seen.casefold() == wanted,
+        lambda seen: wanted in seen.casefold(),
+    ):
+        for seen, pid in visible:
+            if match(seen):
+                return seen, pid
+    running = _matching(name)
+    if running:
+        # processIdentifier() is a pid_t: int() cannot raise on it.
+        # ast-grep-ignore
+        return _name(running[0]), int(running[0].processIdentifier())
+    return None
+
+
 def _window_server_front() -> tuple[str, int] | None:
     """Owner of the frontmost normal window, from a fresh window-server query.
 

@@ -28,7 +28,7 @@ from .protocols import Decider, Verifier
 from .rehearse import Rehearsal, rehearse
 from .runner import Runner
 from .types import Choice, Report, Status, Step, Task, shape_digest
-from .verify import ModelVerifier, WaivedVerifier
+from .verify import ExpectVerifier, ModelVerifier, WaivedVerifier
 
 OK, FAILED, ENVIRONMENT = 0, 1, 2
 
@@ -55,6 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ax_cmd = sub.add_parser("ax", help="dump accessibility targets for the frontmost app")
     _output_flags(ax_cmd)
+    ax_cmd.add_argument("--app", default=None, help="look at this application without focus")
 
     probe = sub.add_parser("probe", help="dump the fused accessibility + pixel view")
     _output_flags(probe)
@@ -305,6 +306,7 @@ def _output_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--focus", default=None, help="bring this running application to the front first"
     )
+
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--limit", type=int, default=25, help="how many targets to print")
     parser.add_argument(
@@ -381,6 +383,14 @@ def _pixel_flags(parser: argparse.ArgumentParser) -> None:
     about: System Settings exposes 100+ targets (above ``rich_at``), so ``auto`` skips
     the overlay entirely, while the 27 sidebar rows that matter have no name at all.
     """
+    parser.add_argument(
+        "--app",
+        default=None,
+        help=(
+            "look at this application wherever it is, without taking focus; acting on it "
+            "while it is behind other windows is limited to accessibility actions"
+        ),
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--no-pixels", action="store_true", help="accessibility only")
     group.add_argument(
@@ -393,11 +403,12 @@ def _pixel_flags(parser: argparse.ArgumentParser) -> None:
 def _mac_source(args: argparse.Namespace) -> Any:
     from .sensors.macos.screen import open_sensor
 
+    app = getattr(args, "app", None)
     if getattr(args, "no_pixels", False):
-        return open_sensor(pixels=False)
+        return open_sensor(pixels=False, app=app)
     if getattr(args, "pixels", False):
-        return open_sensor(pixels=True)
-    return open_sensor(pixels="auto")
+        return open_sensor(pixels=True, app=app)
+    return open_sensor(pixels="auto", app=app)
 
 
 def _ax(args: argparse.Namespace) -> int:
@@ -405,7 +416,7 @@ def _ax(args: argparse.Namespace) -> int:
 
     _focus(args)
 
-    source = AXSource()
+    source = AXSource(app=args.app)
     started = time.perf_counter()
     targets = source.targets()
     elapsed = round((time.perf_counter() - started) * 1000)
@@ -591,7 +602,8 @@ def _budget_for_a_model(task: Task) -> Task:
 
 
 def _run(args: argparse.Namespace) -> int:
-    task, choices = json_io.load_task(args.task)
+    loaded = json_io.load_task_file(args.task)
+    task, choices = loaded.task, loaded.steps
     if not choices and not args.model:
         print(
             "task file has no 'steps' script; use --model to let a model decide instead",
@@ -613,6 +625,10 @@ def _run(args: argparse.Namespace) -> int:
         verifier = ModelVerifier(model_from_env())
     else:
         decider = ScriptedDecider(choices)
+    if loaded.expect:
+        # Declared state first: precise and offline. A check it does not cover goes to
+        # the model when there is one, and is refused when there is not.
+        verifier = ExpectVerifier(loaded.expect, fallback=verifier)
     if args.trust_decider:
         warnings.warn(
             "--trust-decider: DONE is accepted without independent verification", stacklevel=1

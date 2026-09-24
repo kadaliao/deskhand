@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import replace
 from typing import Any, Literal
 
 from ...errors import CannotDo, NoPermission, StaleTarget
@@ -184,12 +185,17 @@ class MacSensor:
         rest move the real mouse and keyboard. ``Report`` carries it per step so
         "how much of this task was done semantically?" is a number, not a claim.
         """
+        behind = self._behind(view)
         if action.target is None:
+            if behind and action.verb is not Verb.WAIT:
+                raise CannotDo(self._behind_why(view, action))
             return self._whole_screen(action)
 
         target = view.target(action.target)
 
         if target.visual:
+            if behind:
+                raise CannotDo(self._behind_why(view, action))
             return self._by_pixels(view, action, target)
 
         ref = self.ax.ref(action.target)
@@ -199,17 +205,45 @@ class MacSensor:
         if action.verb is Verb.PRESS:
             # Chosen by id, a container still reaches here: resolving by label prefers the
             # control, but an id names exactly one thing and validation cannot know whether
-            # the application will honour AXPress on it.
-            return self.ax.press(ref, click_fallback=not is_container(target))
+            # the application will honour AXPress on it. Behind other windows, a click at
+            # any centre lands on whatever is in front.
+            return self.ax.press(ref, click_fallback=not is_container(target) and not behind)
         if action.verb is Verb.MENU:
-            return self.ax.show_menu(ref)
+            return self.ax.show_menu(ref, click_fallback=not behind)
         if action.verb is Verb.OPEN:
+            if behind:
+                return self._open(ref, replace(target, box=None))
             return self._open(ref, target)
         if action.verb in {Verb.TYPE, Verb.SET}:
-            return self._write(ref, action)
+            return self._write(ref, action, keys_allowed=not behind)
         if action.verb is Verb.DRAG:
+            if behind:
+                raise CannotDo(self._behind_why(view, action))
             return self._drag(view, action, target)
         raise CannotDo(f"{action.verb} is not implemented for accessibility targets")
+
+    def _behind(self, view: View) -> bool:
+        """Whether the pinned application is not the one in front right now.
+
+        Only a pinned sensor can be behind: unpinned, it looks at whatever is in front by
+        definition. Asked at the moment of acting, because the person using the machine
+        may have switched windows since the view was taken.
+        """
+        if not self.ax.app:
+            return False
+        from .apps import frontmost
+
+        front = frontmost()
+        return front is None or front[1] != view.notes.get("pid")
+
+    @staticmethod
+    def _behind_why(view: View, action: Action) -> str:
+        return (
+            f"{view.app} is not in front, so only accessibility actions can reach it; "
+            f"{action.verb} would need the mouse or keyboard, which would land in the window "
+            "that is. Bring it forward first (--focus), or choose a control that answers "
+            "natively."
+        )
 
     def _whole_screen(self, action: Action) -> str:
         if action.verb is Verb.WAIT:
@@ -261,7 +295,7 @@ class MacSensor:
         keys.drag(target.box, onto.box)
         return "drag"
 
-    def _write(self, ref: Any, action: Action) -> str:
+    def _write(self, ref: Any, action: Action, *, keys_allowed: bool = True) -> str:
         """Set or type an agent-supplied literal. Never invents text."""
         text = action.value
         if text is None:
@@ -274,6 +308,11 @@ class MacSensor:
             # value as it was supplied rather than as a spelling of it.
             return self.ax.set_value(ref, text)
 
+        if not keys_allowed:
+            raise CannotDo(
+                "this field does not take a value through accessibility, and typing into it "
+                "needs keyboard focus, which the application does not have"
+            )
         self._focus_or_die(ref)
         keys.select_all()
         time.sleep(0.05)
@@ -294,12 +333,16 @@ class MacSensor:
         raise CannotDo("could not confirm keyboard focus on the target; refusing to type")
 
 
-def open_sensor(*, pixels: Pixels = "auto") -> MacSensor:
-    """Build the real thing, with a clear error if a permission is missing."""
+def open_sensor(*, pixels: Pixels = "auto", app: str | None = None) -> MacSensor:
+    """Build the real thing, with a clear error if a permission is missing.
+
+    ``app`` pins the sensor to one application instead of whichever is in front, so it
+    can be looked at, and acted on through accessibility, without taking focus.
+    """
     from .ax import require_permission
 
     require_permission()
-    return MacSensor(pixels=pixels)
+    return MacSensor(ax=AXSource(app=app), pixels=pixels)
 
 
 def permissions() -> dict[str, bool]:

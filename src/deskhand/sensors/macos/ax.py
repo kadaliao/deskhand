@@ -191,7 +191,11 @@ class AXSource:
     name = "ax"
     rank = 0
 
-    def __init__(self, *, max_elements: int = 900, max_depth: int = 14) -> None:
+    def __init__(
+        self, *, max_elements: int = 900, max_depth: int = 14, app: str | None = None
+    ) -> None:
+        self.app = app
+        """Look at this application wherever it is, instead of whichever one is in front."""
         self.max_elements = max_elements
         self.max_depth = max_depth
         self.frame: Frame | None = None
@@ -213,9 +217,15 @@ class AXSource:
         System Settings while Chrome was in front, and two clicks intended for a sidebar
         row had no effect at all.
         """
-        from .apps import frontmost as live_frontmost  # lazy: apps imports this module
+        from .apps import find  # lazy: apps imports this module
+        from .apps import frontmost as live_frontmost
 
-        current = live_frontmost()
+        if self.app:
+            current = find(self.app)
+            if current is None:
+                raise CannotDo(f"no running application called {self.app!r}")
+        else:
+            current = live_frontmost()
         if current is None:
             raise CannotDo("no frontmost application")
         name, pid = current
@@ -546,14 +556,24 @@ class AXSource:
     # ------------------------------------------------------------- hit test
 
     def hit(self, x: float, y: float) -> Target | None:
-        """Which accessibility element is at this point, if any."""
-        system = ax().AXUIElementCreateSystemWide()
-        self._timeout(system)
+        """Which accessibility element is at this point, if any.
+
+        Looking at a pinned application that may be behind others, the question goes to
+        that application rather than to the whole screen: the system-wide answer is
+        whatever is drawn on top, and a pixel region read from the pinned window would be
+        absorbed into another application's element.
+        """
+        pinned = self.frame.pid if self.app and self.frame else None
+        asked = ax().AXUIElementCreateApplication(pinned) if pinned else None
+        asked = asked if asked is not None else ax().AXUIElementCreateSystemWide()
+        self._timeout(asked)
         try:
-            error, element = ax().AXUIElementCopyElementAtPosition(system, float(x), float(y), None)
+            error, element = ax().AXUIElementCopyElementAtPosition(asked, float(x), float(y), None)
         except Exception:
             return None
         if error != 0 or element is None:
+            return None
+        if pinned and _pid_of(element) not in (None, pinned):
             return None
         details = self._details(element)
         role = details.get("AXRole")
@@ -601,11 +621,15 @@ class AXSource:
         click(box)
         return "click"
 
-    def show_menu(self, ref: Any) -> str:
+    def show_menu(self, ref: Any, *, click_fallback: bool = True) -> str:
         if "AXShowMenu" in self._actions(ref):
             error = ax().AXUIElementPerformAction(ref, "AXShowMenu")
             if error == 0:
                 return "ax-menu"
+        if not click_fallback:
+            raise CannotDo(
+                "the element did not accept AXShowMenu, and a right click is not allowed"
+            )
         box = _box(self._one(ref, "AXPosition"), self._one(ref, "AXSize"))
         if box is None:
             raise CannotDo("element has no position for a context menu")
@@ -811,3 +835,15 @@ def _kind(role: str, subrole: str) -> str:
     if subrole:
         return f"{trimmed.lower()}:{subrole.removeprefix('AX').lower()}"
     return trimmed.lower()
+
+
+def _pid_of(element: Any) -> int | None:
+    """The process that owns an element, or ``None`` when it cannot be asked."""
+    getter = getattr(ax(), "AXUIElementGetPid", None)
+    if getter is None:
+        return None
+    try:
+        error, pid = getter(element, None)
+    except Exception:
+        return None
+    return pid if error == 0 and isinstance(pid, int) else None

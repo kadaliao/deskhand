@@ -6,14 +6,18 @@ because a silently dropped field is a bug the caller cannot see.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .types import Choice, Limits, Report, Status, Task, Verb, View
+from .verify import Expectation
 
-TASK_FIELDS = {"goal", "checks", "inputs", "notes", "limits", "steps"}
+TASK_FIELDS = {"goal", "checks", "inputs", "notes", "limits", "steps", "expect"}
+EXPECT_FIELDS = {"label", "kind", "selected", "value", "enabled", "focused", "absent"}
 LIMIT_FIELDS = {
     "max_steps",
     "max_ms",
@@ -120,6 +124,69 @@ def report_to_dict(report: Report) -> dict[str, Any]:
     return report.brief()
 
 
+def expectation_from_dict(check: str, payload: Any) -> Expectation:
+    if not isinstance(payload, Mapping):
+        raise ValueError(f"expect[{check!r}] must be an object like {{'label': 'Dark'}}")
+    _reject_unknown(payload, EXPECT_FIELDS, f"expect[{check!r}]")
+    label = payload.get("label")
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError(f"expect[{check!r}] needs a non-empty 'label'")
+    kind = payload.get("kind")
+    if kind is not None and not isinstance(kind, str):
+        raise ValueError(f"expect[{check!r}].kind must be a string")
+    flags: dict[str, bool | None] = {}
+    for name in ("selected", "enabled", "focused", "absent"):
+        value = payload.get(name)
+        if value is not None and not isinstance(value, bool):
+            raise ValueError(f"expect[{check!r}].{name} must be true or false")
+        flags[name] = value
+    value = payload.get("value")
+    if value is not None and not isinstance(value, (str, int, float, bool)):
+        raise ValueError(f"expect[{check!r}].value must be a string, number or boolean")
+    return Expectation(
+        label=label,
+        kind=kind,
+        selected=flags["selected"],
+        value=value,
+        enabled=flags["enabled"],
+        focused=flags["focused"],
+        absent=bool(flags["absent"]),
+    )
+
+
+def expectations_from_payload(payload: Mapping[str, Any], task: Task) -> dict[str, Expectation]:
+    """``expect`` maps a check, word for word, to the state that confirms it.
+
+    A key that is not one of the task's checks is refused: it would declare how to verify
+    something nobody asked for, while the check it was meant for silently goes unverified.
+    """
+    raw = payload.get("expect") or {}
+    if not isinstance(raw, Mapping):
+        raise ValueError("'expect' must be an object mapping a check to what confirms it")
+    unknown = sorted(set(raw) - set(task.checks))
+    if unknown:
+        raise ValueError(f"expect names check(s) the task does not have: {unknown}")
+    return {str(check): expectation_from_dict(str(check), spec) for check, spec in raw.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class TaskFile:
+    """Everything a task file can say: the task, an optional script, how to check it."""
+
+    task: Task
+    steps: tuple[Choice, ...] = ()
+    expect: Mapping[str, Expectation] = dataclasses.field(default_factory=dict)
+
+
+def task_file_from_dict(payload: Mapping[str, Any]) -> TaskFile:
+    task = task_from_dict(payload)
+    return TaskFile(task, choices_from_payload(payload), expectations_from_payload(payload, task))
+
+
+def load_task_file(path: str | Path) -> TaskFile:
+    return task_file_from_dict(_read_object(path))
+
+
 def load_task(path: str | Path) -> tuple[Task, tuple[Choice, ...]]:
     """Read a task file. ``steps`` is optional and becomes a ScriptedDecider script.
 
@@ -127,16 +194,21 @@ def load_task(path: str | Path) -> tuple[Task, tuple[Choice, ...]]:
     a bad input file and reports it with an exit code. What this adds is *which*
     file, which ``json``'s own message does not say.
     """
+    loaded = load_task_file(path)
+    return loaded.task, loaded.steps
+
+
+def _read_object(path: str | Path) -> dict[str, Any]:
     source = Path(path)
     try:
-        payload = json.loads(source.read_text())
+        payload = json.loads(source.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"no task file at {source}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"{source} is not valid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError("task file must contain a JSON object")
-    return task_from_dict(payload), choices_from_payload(payload)
+    return payload
 
 
 def dump(payload: Any) -> str:

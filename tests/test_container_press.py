@@ -23,6 +23,8 @@ from deskhand.types import Action, Box, Target, Verb, View
 class RecordingAX:
     """Only what ``MacSensor.act`` touches on the accessibility side."""
 
+    app = None
+
     def __init__(self) -> None:
         self.pressed: list[dict[str, Any]] = []
 
@@ -100,3 +102,62 @@ class TestAFailedPress:
         found, clicks = source
         assert found.press(object()) == "click"
         assert clicks == [Box(10, 10, 80, 40)]
+
+
+class BehindAX(RecordingAX):
+    """A sensor pinned to an application that is not the one in front."""
+
+    app = "Settings"
+
+
+@pytest.fixture
+def behind(monkeypatch: pytest.MonkeyPatch) -> tuple[MacSensor, BehindAX]:
+    from deskhand.sensors.macos import apps
+
+    monkeypatch.setattr(apps, "frontmost", lambda: ("Ghostty", 999))
+    recorder = BehindAX()
+    return MacSensor(ax=recorder, ocr=object(), pixels=False), recorder  # type: ignore[arg-type]
+
+
+def _pinned_view(*targets: Target) -> View:
+    return View(app="Settings", window="w", revision="r", targets=targets, notes={"pid": 42})
+
+
+class TestAnApplicationBehindOthers:
+    """Keys and clicks land in the window in front; only accessibility reaches one behind."""
+
+    def test_a_press_is_allowed_but_may_not_fall_back_to_a_click(
+        self, behind: tuple[MacSensor, BehindAX]
+    ) -> None:
+        sensor, recorder = behind
+        target = _target("t1", "button")
+        sensor.act(_pinned_view(target), Action(verb=Verb.PRESS, target="t1"))
+        assert recorder.pressed == [{"click_fallback": False}]
+
+    def test_keys_are_refused(self, behind: tuple[MacSensor, BehindAX]) -> None:
+        sensor, _ = behind
+        with pytest.raises(CannotDo, match="not in front"):
+            sensor.act(_pinned_view(), Action(verb=Verb.KEY, key="DOWN"))
+
+    def test_a_pixel_target_is_refused(self, behind: tuple[MacSensor, BehindAX]) -> None:
+        sensor, _ = behind
+        pixel = Target(
+            id="px",
+            kind="text",
+            label="Dark",
+            visual=True,
+            box=Box(0, 0, 5, 5),
+            actions=frozenset({Verb.PRESS}),
+        )
+        with pytest.raises(CannotDo, match="not in front"):
+            sensor.act(_pinned_view(pixel), Action(verb=Verb.PRESS, target="px"))
+
+    def test_in_front_it_behaves_as_before(
+        self, behind: tuple[MacSensor, BehindAX], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from deskhand.sensors.macos import apps
+
+        monkeypatch.setattr(apps, "frontmost", lambda: ("Settings", 42))
+        sensor, recorder = behind
+        sensor.act(_pinned_view(_target("t1", "button")), Action(verb=Verb.PRESS, target="t1"))
+        assert recorder.pressed == [{"click_fallback": True}]
