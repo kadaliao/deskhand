@@ -15,6 +15,7 @@ from ..fusion import box_of
 from ..settle import converge
 from ..types import (
     Action,
+    Box,
     Target,
     Verb,
     View,
@@ -39,6 +40,7 @@ class FakeSensor:
         app: str = "Fake App",
         window: str = "Fake Window",
         stuck_scenes: frozenset[str] = frozenset(),
+        frame: Box | None = None,
     ) -> None:
         if start not in scenes:
             raise ValueError(f"start scene {start!r} is not defined")
@@ -48,6 +50,7 @@ class FakeSensor:
         self._app = app
         self._window = window
         self._scene = start
+        self._frame = frame
         self.done: list[Action] = []
 
     @property
@@ -63,7 +66,7 @@ class FakeSensor:
             revision=structure_digest(targets),
             targets=targets,
             content=content_digest(targets),
-            frame=box_of(targets),
+            frame=self._frame or box_of(targets),
             notes={"scene": name},
             at_ms=round(time.time() * 1000),
         )

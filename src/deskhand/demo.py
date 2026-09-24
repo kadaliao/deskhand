@@ -66,12 +66,23 @@ _EDGES: dict[Edge, str] = {
 }
 
 
+WINDOW = Box(0, 40, 420, 260)
+"""The scripted window's own rectangle, so a picture of it has the window's shape."""
+
+
 def sensor() -> FakeSensor:
     return FakeSensor(
         {
             "home": (
                 EFFECTS,
-                Target(id="clip_1", kind="clip", label="interview.mp4", source="demo"),
+                Target(
+                    id="clip_1",
+                    kind="clip",
+                    label="interview.mp4",
+                    box=Box(160, 80, 240, 150),
+                    selected=True,
+                    source="demo",
+                ),
             ),
             "panel": (EFFECTS, SEARCH, BLUR),
             "chosen": (EFFECTS, SEARCH, BLUR, ENABLED_OFF),
@@ -79,6 +90,9 @@ def sensor() -> FakeSensor:
         },
         start="home",
         edges=_EDGES,
+        app="Clip Editor",
+        window="interview.mp4",
+        frame=WINDOW,
     )
 
 

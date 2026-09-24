@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="deskhand-token" content="{{TOKEN}}">
+<meta name="deskhand-desk" content="{{DESK}}">
+<title>deskhand 控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%232f6fdf'/%3E%3Crect x='4' y='4' width='8' height='8' rx='1.5' fill='none' stroke='white' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="mark" aria-hidden="true"></span>deskhand <small>控制台</small></div>
+  <nav class="tabs" role="tablist">
+    <a href="#view" data-tab="view">实时界面</a>
+    <a href="#tasks" data-tab="tasks">任务</a>
+    <a href="#runs" data-tab="runs">运行记录</a>
+    <a href="#setup" data-tab="setup">环境</a>
+  </nav>
+  <div class="status" id="status"></div>
+</header>
+
+<main>
+  <!-- live view -->
+  <section id="tab-view" class="tab">
+    <div class="toolbar">
+      <label class="field">应用
+        <select id="app"></select>
+      </label>
+      <div class="seg" id="pixels" role="radiogroup" aria-label="像素识别">
+        <button data-v="auto" class="on">自动</button><button data-v="on">识别</button><button data-v="off">不识别</button>
+      </div>
+      <button id="refresh" class="primary">读取界面</button>
+      <label class="check"><input type="checkbox" id="auto"> 每 3 秒刷新</label>
+      <span class="grow"></span>
+      <span class="meta" id="view-meta">选一个应用，然后读取界面。读取不会切换焦点。</span>
+    </div>
+    <div class="split">
+      <div class="stage-wrap">
+        <div class="stage" id="stage"><div class="empty">还没有读取界面</div></div>
+        <div class="legend">
+          <label><input type="checkbox" data-layer="named" checked><i class="sw named"></i>有名称</label>
+          <label><input type="checkbox" data-layer="unnamed" checked><i class="sw unnamed"></i>无名称</label>
+          <label><input type="checkbox" data-layer="pixel" checked><i class="sw pixel"></i>来自像素</label>
+          <label><input type="checkbox" id="labels"> 显示名称</label>
+        </div>
+      </div>
+      <aside class="inspector">
+        <div class="card" id="detail"><p class="hint">点选界面上的一个框，查看它能做什么，或把它加进任务。</p></div>
+        <div class="card list-card">
+          <input type="search" id="filter" placeholder="按 id、类型、名称、动作筛选" autocomplete="off">
+          <div class="meta" id="count"></div>
+          <ul class="targets" id="targets"></ul>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- tasks -->
+  <section id="tab-tasks" class="tab" hidden>
+    <div class="split tasks-split">
+      <aside class="card task-list">
+        <div class="row"><h2>任务</h2><button id="new-task">新建</button></div>
+        <ul id="task-list"></ul>
+      </aside>
+      <div class="editor">
+        <div class="card">
+          <div class="row">
+            <label class="field wide">名称<input id="t-name" placeholder="例如 dark-mode"></label>
+            <label class="field">目标应用<select id="t-app"></select></label>
+          </div>
+          <label class="field">要完成什么<textarea id="t-goal" rows="2" placeholder="例如：把系统外观切换为深色"></textarea></label>
+        </div>
+
+        <div class="card">
+          <div class="row"><h2>成功条件</h2><button id="add-check">添加</button></div>
+          <p class="hint">每一条都要在执行结束时被当前界面证实。写明"哪个控件处于什么状态"，就不需要模型也能判定成功。</p>
+          <ol class="rows" id="checks"></ol>
+        </div>
+
+        <div class="card">
+          <div class="row"><h2>步骤</h2><button id="add-step">添加</button></div>
+          <p class="hint">按名称找控件；名称在界面上重名时，改用 id。可以在"实时界面"里点选控件直接生成步骤。</p>
+          <ol class="rows" id="steps"></ol>
+        </div>
+
+        <details class="card">
+          <summary><h2>输入与限制</h2></summary>
+          <div class="row"><h3>输入</h3><button id="add-input">添加</button></div>
+          <p class="hint">TYPE 和 SET 只能填这里声明过的值，决策方不能自己编造文字。</p>
+          <ol class="rows" id="inputs"></ol>
+          <h3>限制</h3>
+          <div class="row">
+            <label class="field">最多步数<input type="number" id="l-steps" min="1" value="8"></label>
+            <label class="field">总时长 ms<input type="number" id="l-ms" min="0" placeholder="不限"></label>
+            <label class="field">等待稳定 ms<input type="number" id="l-settle" min="0" value="2500"></label>
+          </div>
+        </details>
+
+        <details class="card">
+          <summary><h2>任务文件 JSON</h2></summary>
+          <p class="hint">和 <code>deskhand run --task</code> 读的是同一种文件。可以直接改，再点"应用 JSON"。</p>
+          <textarea id="t-json" rows="14" spellcheck="false"></textarea>
+          <div class="row end"><button id="apply-json">应用 JSON</button></div>
+        </details>
+
+        <div class="actions">
+          <span class="meta" id="task-msg"></span>
+          <span class="grow"></span>
+          <button id="delete-task" class="ghost danger">删除</button>
+          <button id="save-task">保存</button>
+          <button id="rehearse">演练</button>
+          <button id="run-task" class="primary">执行…</button>
+        </div>
+        <div class="card" id="rehearsal" hidden></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- runs -->
+  <section id="tab-runs" class="tab" hidden>
+    <div class="split runs-split">
+      <aside class="card run-list"><h2>运行记录</h2><ul id="run-list"></ul></aside>
+      <div class="run-detail" id="run-detail"><div class="card"><p class="hint">选择一次运行查看过程和报告。</p></div></div>
+    </div>
+  </section>
+
+  <!-- setup -->
+  <section id="tab-setup" class="tab" hidden>
+    <div class="grid" id="setup"></div>
+  </section>
+</main>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h2>执行任务</h2>
+    <p id="c-summary"></p>
+    <label class="check"><input type="checkbox" id="c-focus"> 先把应用切到前台（会抢占你当前的窗口焦点）</label>
+    <p class="hint" id="c-focus-hint">不切前台时，只能执行通过无障碍接口完成的动作；需要键盘或鼠标的步骤会被拒绝并记录原因，不会落到你正在用的窗口里。</p>
+    <label class="check" id="c-model-row"><input type="checkbox" id="c-model"> 让模型决定步骤</label>
+    <div class="row end">
+      <button value="cancel" class="ghost">取消</button>
+      <button value="go" class="primary" id="c-go">开始执行</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

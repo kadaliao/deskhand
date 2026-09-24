@@ -126,7 +126,7 @@ class TestFinishFindings:
 class TestReport:
     def test_the_rehearsal_serialises(self) -> None:
         blob = home_rehearsal(demo.verifier()).brief()
-        assert blob["app"] == "Fake App"
+        assert blob["app"] == "Clip Editor"
         assert len(blob["findings"]) == 4
         assert json.loads(json.dumps(blob))["findings"][1]["target"]["kind"] == "button"
 

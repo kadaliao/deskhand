@@ -140,9 +140,11 @@ src/deskhand/
   verify.py         NoVerifier, PredicateVerifier, ModelVerifier
   json_io.py        the strict JSON boundary
   paint.py          terminal colour, only for a terminal; which routes count as semantic
+  console/          `deskhand app`: desk.py (MacDesk, DemoDesk), server.py (API, runs),
+                    static/ (the page: plain HTML, CSS and JS, no dependencies)
   report_html.py    a Report.brief() as one self-contained, escaped HTML page
   demo.py           a scripted desktop, a deliberately wrong first choice, and M2's shape
-  cli.py            demo, ax, probe, doctor, stability, bench, permit, run, report
+  cli.py            demo, app, ax, probe, doctor, stability, bench, permit, run, report
   deciders/         rule.py, scripted.py, llm.py
   sensors/
     fake.py         a deterministic desktop (self-checking tests)

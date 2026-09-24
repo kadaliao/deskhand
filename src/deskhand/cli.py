@@ -45,6 +45,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     _report_flag(demo_cmd)
 
+    app_cmd = sub.add_parser("app", help="open the local web console (127.0.0.1 only)")
+    app_cmd.add_argument("--port", type=int, default=8765, help="0 picks a free port")
+    app_cmd.add_argument(
+        "--demo", action="store_true", help="the scripted desktop: no permissions needed"
+    )
+    app_cmd.add_argument(
+        "--home", default=None, help="where tasks and runs are kept (default: ~/.deskhand)"
+    )
+    app_cmd.add_argument("--no-open", action="store_true", help="do not open a browser")
+
     report_cmd = sub.add_parser(
         "report", help="turn a saved `run --json` report into a self-contained HTML page"
     )
@@ -128,6 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     handlers = {
         "demo": _demo,
+        "app": _app,
         "report": _report,
         "ax": _ax,
         "probe": _probe,
@@ -333,6 +344,33 @@ def _demo(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _app(args: argparse.Namespace) -> int:
+    """Serve the console until interrupted. Everything it does is also a CLI command."""
+    import webbrowser
+
+    from .console.server import make_server, open_console
+
+    home = Path(args.home).expanduser() if args.home else Path.home() / ".deskhand"
+    console = open_console(demo_desk=args.demo, home=home)
+    try:
+        server = make_server(console, port=args.port)
+    except OSError:
+        server = make_server(console, port=0)  # the usual port is taken: any free one
+    url = f"http://127.0.0.1:{server.server_address[1]}/"
+    desk = "the scripted demo desktop" if args.demo else "this Mac"
+    print(f"deskhand console on {desk}: {url}")
+    print(f"tasks and runs: {console.home}   (Ctrl-C to stop)")
+    if not args.no_open:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        server.server_close()
+    return OK
+
+
 def _report_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--report",
@@ -496,7 +534,7 @@ def _doctor(args: argparse.Namespace) -> int:
 
     from .sensors.macos.ax import AXSource
 
-    source = AXSource()
+    source = AXSource(app=args.app)
     started = time.perf_counter()
     targets = source.targets()
     report["ax"] = {
@@ -509,7 +547,7 @@ def _doctor(args: argparse.Namespace) -> int:
         "nudge_attributes": [
             a
             for a in ("AXManualAccessibility", "AXEnhancedUserInterface")
-            if a in source.attribute_names(_app_ref())
+            if source.frame and a in source.attribute_names(_app_ref(source.frame.pid))
         ],
     }
 
@@ -529,10 +567,14 @@ def _doctor(args: argparse.Namespace) -> int:
     return OK
 
 
-def _app_ref() -> Any:
-    from .sensors.macos.ax import appkit, ax
+def _app_ref(pid: int) -> Any:
+    """The application element for the walk that was just taken.
 
-    pid = appkit().NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier()
+    Not ``NSWorkspace.frontmostApplication()``: in a process with no run loop that is a
+    snapshot from first access, and the walk may be of a pinned application anyway.
+    """
+    from .sensors.macos.ax import ax
+
     return ax().AXUIElementCreateApplication(pid)
 
 

@@ -30,6 +30,8 @@ class Finding:
     ok: bool
     detail: str
     target: Target | None = None
+    later: bool = False
+    """Not in this view, after a step that may reveal it: unknown yet, not refuted."""
 
     def brief(self) -> dict[str, Any]:
         # Every key is always present: a consumer should not have to guess whether a
@@ -40,6 +42,7 @@ class Finding:
             "ok": self.ok,
             "detail": self.detail,
             "target": None if self.target is None else _target_brief(self.target),
+            "later": self.later,
         }
 
 
@@ -171,7 +174,7 @@ def _action_finding(number: int, choice: Choice, task: Task, view: View) -> Find
         detail = str(exc)
         if hidden_behind_an_earlier_step:
             detail += " (not in the current view; an earlier step may reveal it)"
-        return Finding(number, what, False, detail, None)
+        return Finding(number, what, False, detail, None, later=hidden_behind_an_earlier_step)
 
     assert target is not None  # build_action succeeded, so it resolved
     where = "no geometry" if target.box is None else f"at {target.box.x:.0f},{target.box.y:.0f}"

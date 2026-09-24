@@ -64,6 +64,7 @@ ignore = ["PLR0911", "PLR0912", "PLR0913", "PLR0915"]
 # macOS package must not import pyobjc, so it stays importable and testable off a Mac.
 "src/deskhand/cli.py" = ["PLC0415"]
 "src/deskhand/sensors/macos/*" = ["PLC0415"]
+"src/deskhand/console/desk.py" = ["PLC0415"]
 "src/deskhand/protocols.py" = ["ARG002"]
 
 [tool.mypy]

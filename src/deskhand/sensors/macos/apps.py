@@ -105,6 +105,12 @@ def find(name: str) -> tuple[str, int] | None:
     if not wanted:
         return None
     visible = on_screen()
+    if wanted.startswith("pid:") and wanted[4:].isdigit():
+        # Two applications can share a name (two Chrome installs, a PWA shim); a pid
+        # names exactly one. isdigit() was checked, so int() cannot raise.
+        # ast-grep-ignore
+        pid = int(wanted[4:])
+        return next((seen for seen in visible if seen[1] == pid), (name, pid))
     for match in (
         lambda seen: seen.casefold() == wanted,
         lambda seen: wanted in seen.casefold(),

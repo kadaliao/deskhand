@@ -97,12 +97,13 @@ class OCRSource:
                 "Screen Recording permission is required for pixel perception. "
                 "Grant it in System Settings > Privacy & Security > Screen Recording."
             )
-        window = window_box_of(pid, title) or box
-        if window is None:
+        # The window accessibility described, matched by rectangle before title: the two
+        # disagree for an application with several windows, and reading the other one puts
+        # every recognised name on the wrong control.
+        picked = _pick(pid, title, box)
+        if picked is None:
             return ()
-        window_id = _window_id(pid, title)
-        if window_id is None:
-            return ()
+        window_id, _, window = picked
         image = _capture(window_id)
         # A CGImage's dimensions are numbers, so float() cannot raise on them.
         # ast-grep-ignore
@@ -173,10 +174,26 @@ def _candidates(pid: int) -> list[tuple[int, str, Box]]:
     return found
 
 
-def _pick(pid: int, title: str) -> tuple[int, str, Box] | None:
+def _pick(pid: int, title: str, box: Box | None = None) -> tuple[int, str, Box] | None:
     windows = _candidates(pid)
     if not windows:
         return None
+    if box is not None:
+        # The window accessibility is describing, by where it is: an application with two
+        # windows (one per display, say) lists them in an order that need not start with
+        # the focused one, and a picture of the other window misaligns every rectangle.
+        def distance(window: tuple[int, str, Box]) -> float:
+            other = window[2]
+            return (
+                abs(other.x - box.x)
+                + abs(other.y - box.y)
+                + abs(other.w - box.w)
+                + abs(other.h - box.h)
+            )
+
+        closest = min(windows, key=distance)
+        if distance(closest) <= MIN_WINDOW_SIDE:
+            return closest
     wanted = title.strip().casefold()
     if wanted:
         for window in windows:
@@ -184,11 +201,6 @@ def _pick(pid: int, title: str) -> tuple[int, str, Box] | None:
             if name and (name == wanted or wanted in name or name in wanted):
                 return window
     return windows[0]
-
-
-def _window_id(pid: int, title: str) -> int | None:
-    picked = _pick(pid, title)
-    return None if picked is None else picked[0]
 
 
 def window_box_of(pid: int, title: str = "") -> Box | None:
@@ -225,6 +237,34 @@ def _capture(window_id: int) -> Any:
     if image is None:
         raise NoPermission("could not capture the window; check Screen Recording permission")
     return image
+
+
+def snapshot(
+    pid: int, title: str = "", *, box: Box | None = None, quality: float = 0.82
+) -> tuple[bytes, Box] | None:
+    """One window as JPEG bytes, and the screen box it covers. Read-only.
+
+    For a person to look at (the console draws targets over it), not for recognition:
+    JPEG keeps a Retina capture of a large window to a few hundred kilobytes.
+    """
+    if not screen_capture_allowed():
+        raise NoPermission("Screen Recording permission is required to show the window")
+    picked = _pick(pid, title, box)
+    if picked is None:
+        return None
+    number, _, box = picked
+    image = _capture(number)
+    quartz = _quartz()
+    data = _appkit().NSMutableData.data()
+    destination = quartz.CGImageDestinationCreateWithData(data, "public.jpeg", 1, None)
+    if destination is None:
+        raise CannotDo("could not create a JPEG encoder")
+    quartz.CGImageDestinationAddImage(
+        destination, image, {quartz.kCGImageDestinationLossyCompressionQuality: quality}
+    )
+    if not quartz.CGImageDestinationFinalize(destination):
+        raise CannotDo("could not encode the window image")
+    return bytes(data), box
 
 
 # --------------------------------------------------------------------------- #

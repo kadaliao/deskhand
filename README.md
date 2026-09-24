@@ -5,6 +5,7 @@ loop survives failures instead of ending on them.
 
 ```bash
 uv sync --extra macos
+uv run deskhand app         # the console, in your browser (add --demo: no permissions needed)
 uv run deskhand demo        # the whole loop, no permissions needed
 uv run deskhand doctor      # what can accessibility actually see right now?
 uv run deskhand probe       # the fused view, as the decider sees it
@@ -100,6 +101,48 @@ hit test.
 **5. The trace tells you how semantic the run was.**
 Every step records the route it took (`ax-press`, `ax-set-value`, `ax-focus+keys`, `click`,
 `keys`), plus per-phase timings. "0 coordinate clicks" is a measurement here, not a claim.
+
+## The console
+
+`deskhand app` opens a local web console (127.0.0.1 only) over this Mac, or over the
+scripted desktop with `--demo`:
+
+- **Live view** -- pick any application with a window on screen and read it *without
+  taking focus*: its window, with every target drawn over it (named, unnamed, and read from
+  pixels), and a filterable list. Click a target to see what it offers.
+- **Tasks** -- build a task by clicking targets: each becomes a step, or a check
+  ("*Dark* is selected"). Rehearse it against the live window, executing nothing, then run it.
+  A task is the same JSON file `deskhand run --task` reads, and it is saved in `~/.deskhand`.
+- **Runs** -- each run streams its steps while it goes, and leaves the HTML report behind.
+- **Setup** -- permissions, the model command, and the CLI equivalent of everything above.
+
+A run asks for confirmation, and says whether it will take focus. Without focus it acts
+only through accessibility: a step that needs the keyboard or the mouse is refused, with
+that reason, instead of landing in the window you are using. The console is also only
+reachable from its own page: a per-launch token on every request, and a `Host` check against
+DNS rebinding.
+
+## Saying what done means
+
+A check is prose, and prose cannot be verified without a model. A task file can also say
+what state confirms each check:
+
+```json
+"checks": ["Appearance is set to Dark"],
+"expect": { "Appearance is set to Dark": { "label": "Dark", "selected": true } }
+```
+
+`label` finds the control (by name, or by a name read from pixels); `selected`, `value`,
+`enabled`, `focused` and `absent` say what must be true of it. Without this, a scripted run
+could only end `ESCALATE` -- nothing checked the claim -- or `DONE` on the script's word.
+
+## Working behind other windows
+
+`--app NAME` (on `probe`, `ax`, `run`, `doctor`, `bench`, `stability`) looks at an
+application wherever it is instead of whichever is in front, so nothing is taken from the
+person using the machine. Acting on it while it is behind is limited to what reaches it
+without the mouse or keyboard: `AXPress` with no click fallback, `AXShowMenu`, setting a
+value. Use `pid:1234` when two applications share a name.
 
 ## Reading a run
 
