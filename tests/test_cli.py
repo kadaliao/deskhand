@@ -89,3 +89,31 @@ def test_failed_status_is_reported_through_the_exit_code(
     assert main(["demo"]) == OK
     capsys.readouterr()
     assert OK != FAILED
+
+
+class TestAModelRunGetsAModelSizedBudget:
+    """A model decision measured 9-33 s; the example tasks allow 40 s for the whole run."""
+
+    def test_a_budget_sized_for_rules_is_raised_and_the_raise_is_said(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from deskhand.cli import MODEL_STEP_MS, _budget_for_a_model
+        from deskhand.types import Limits, Task
+
+        task = Task(goal="g", checks=("c",), limits=Limits(max_steps=6, max_ms=40_000))
+        raised = _budget_for_a_model(task)
+        assert raised.limits.max_ms == 6 * MODEL_STEP_MS
+        assert raised.limits.max_steps == 6
+        assert "raised max_ms 40000" in capsys.readouterr().err
+
+    def test_a_generous_or_absent_budget_is_left_alone(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from deskhand.cli import _budget_for_a_model
+        from deskhand.types import Limits, Task
+
+        generous = Task(goal="g", checks=("c",), limits=Limits(max_steps=2, max_ms=900_000))
+        unbounded = Task(goal="g", checks=("c",), limits=Limits(max_ms=None))
+        assert _budget_for_a_model(generous) is generous
+        assert _budget_for_a_model(unbounded) is unbounded
+        assert capsys.readouterr().err == ""

@@ -13,6 +13,7 @@ import sys
 import time
 import warnings
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from . import demo, json_io
@@ -24,7 +25,7 @@ from .model import model_from_env
 from .protocols import Decider, Verifier
 from .rehearse import Rehearsal, rehearse
 from .runner import Runner
-from .types import Choice, Report, Status, Step, shape_digest
+from .types import Choice, Report, Status, Step, Task, shape_digest
 from .verify import ModelVerifier, WaivedVerifier
 
 OK, FAILED, ENVIRONMENT = 0, 1, 2
@@ -510,6 +511,29 @@ def _focus(args: argparse.Namespace) -> None:
     print(f"took focus: {activated} (was {before[0] if before else 'nothing'})", file=sink)
 
 
+MODEL_STEP_MS = 35_000
+"""Wall clock to allow per step when a model decides.
+
+Measured: one decision took 8.6-32.9 s (median about 21 s) against 0 ms for a rule, so
+the example tasks' ``max_ms: 40000`` -- sized for a decider that costs nothing -- was
+exhausted by the second step of every model run, which then read as a model failure.
+"""
+
+
+def _budget_for_a_model(task: Task) -> Task:
+    """Raise a wall-clock budget that a model could not finish inside, and say so."""
+    limits = task.limits
+    floor = limits.max_steps * MODEL_STEP_MS
+    if limits.max_ms is None or limits.max_ms >= floor:
+        return task
+    print(
+        f"--model: raised max_ms {limits.max_ms} -> {floor} "
+        f"({limits.max_steps} steps x {MODEL_STEP_MS} ms; one model decision measured 9-33 s)",
+        file=sys.stderr,
+    )
+    return replace(task, limits=replace(limits, max_ms=floor))
+
+
 def _run(args: argparse.Namespace) -> int:
     task, choices = json_io.load_task(args.task)
     if not choices and not args.model:
@@ -524,6 +548,7 @@ def _run(args: argparse.Namespace) -> int:
     verifier: Verifier | None = None
     model_label: str | None = None
     if args.model:
+        task = _budget_for_a_model(task)
         decider_model = model_from_env()
         model_label = decider_model.name
         decider = LLMDecider(decider_model)
