@@ -578,12 +578,23 @@ class AXSource:
         found = self._target(ref, str(role), details)
         return None if found is None else found.fingerprint()
 
-    def press(self, ref: Any) -> str:
+    def press(self, ref: Any, *, click_fallback: bool = True) -> str:
+        """``AXPress``, or a click at the element's centre when it has none.
+
+        ``click_fallback=False`` is for containers: the centre of a window or a group is
+        not the thing that was meant, it is whatever happens to be drawn there, so a
+        container that will not press natively is refused rather than clicked blind.
+        """
         actions = self._actions(ref)
         if "AXPress" in actions:
             error = ax().AXUIElementPerformAction(ref, "AXPress")
             if error == 0:
                 return "ax-press"
+        if not click_fallback:
+            raise CannotDo(
+                "a container did not accept AXPress, and a click at its centre would land on"
+                " whatever is drawn there; choose the control inside it"
+            )
         box = _box(self._one(ref, "AXPosition"), self._one(ref, "AXSize"))
         if box is None:
             raise CannotDo("element is neither AXPress-able nor on screen")

@@ -37,7 +37,8 @@ click at the window's centre, which is a blind click into whatever happens to be
 """
 
 
-def _is_container(target: Target) -> bool:
+def is_container(target: Target) -> bool:
+    """Whether this target holds other things rather than being a thing to operate."""
     return target.kind.split(":", 1)[0] in CONTAINERS
 
 
@@ -49,7 +50,7 @@ def _prefer_controls(candidates: list[Target]) -> list[Target]:
     target matching". This narrows the field; where the remaining candidates still tie, the
         refusal below is unchanged.
     """
-    controls = [target for target in candidates if not _is_container(target)]
+    controls = [target for target in candidates if not is_container(target)]
     return controls or candidates
 
 

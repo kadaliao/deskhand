@@ -25,6 +25,7 @@ from ...types import (
     shape_digest,
     structure_digest,
 )
+from ...validate import is_container
 from . import keys
 from .ax import AXSource
 from .ocr import OCRSource, screen_capture_allowed
@@ -196,7 +197,10 @@ class MacSensor:
             raise StaleTarget(f"target {action.target} is no longer live")
 
         if action.verb is Verb.PRESS:
-            return self.ax.press(ref)
+            # Chosen by id, a container still reaches here: resolving by label prefers the
+            # control, but an id names exactly one thing and validation cannot know whether
+            # the application will honour AXPress on it.
+            return self.ax.press(ref, click_fallback=not is_container(target))
         if action.verb is Verb.MENU:
             return self.ax.show_menu(ref)
         if action.verb is Verb.OPEN:
