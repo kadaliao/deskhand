@@ -131,14 +131,17 @@ class Target:
     expanded: bool | None = None
     score: float = 1.0
     note: str = ""
+    hint: str = ""
+    """What the control is for, when the source says (``AXHelp``). Matched, never shown
+    as a name: it tells apart two controls that share one."""
 
     def can(self, verb: Verb) -> bool:
         return verb in self.actions or verb in ANYWHERE
 
     def spoken(self) -> str:
-        """Everything this target is called, primary label first."""
+        """Everything this target is called, primary label first, then what it is for."""
         seen: list[str] = []
-        for candidate in (self.label, *self.labels):
+        for candidate in (self.label, *self.labels, self.hint):
             if candidate and candidate not in seen:
                 seen.append(candidate)
         return " ".join(seen)
@@ -190,6 +193,8 @@ class Target:
             out["enabled"] = False
         if self.note:
             out["note"] = self.note
+        if self.hint:
+            out["hint"] = self.hint
         return out
 
 

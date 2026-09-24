@@ -5,7 +5,7 @@
   ],
   "expect": {
     "Appearance is set to Dark": {
-      "label": "Dark",
+      "label": "dark appearance",
       "selected": true
     }
   },
@@ -27,8 +27,8 @@
     },
     {
       "verb": "PRESS",
-      "target_label": "Dark",
-      "why": "choose the Dark option"
+      "target_label": "dark appearance",
+      "why": "the Dark option of the appearance: the icon style has a Dark button too, and only this one's help says 'dark appearance'"
     },
     {
       "finish": "DONE",

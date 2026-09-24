@@ -219,7 +219,15 @@ class Runner:
                         steps=steps,
                         why=f"decider kept asking for impossible actions; last: {exc}",
                     )
-                look_ms = 0
+                # Look again, and wait for quiet while doing it: "no target matching" is
+                # often a view taken before the effect of the last action had finished
+                # appearing. Measured on System Settings: a sidebar click settled in
+                # 864 ms, on the sidebar's new selection, while the pane it opens was still
+                # loading -- so the next step's control was not in the view it was checked
+                # against, and the decider was never shown the view that had it.
+                look_start = time.perf_counter()
+                view = self.sensor.settle(view, budget_ms=limits.settle_ms)
+                look_ms = _ms(look_start)
                 continue
 
             label = self._label_of(view, action)

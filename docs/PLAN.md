@@ -25,7 +25,39 @@ budget exhaustion, a cancel, and a `DONE` claim that must be refused.
 
 ---
 
-## M1 — a real application, and the measurement that changed this milestone · written
+## M1 — a real application, and the measurement that changed this milestone · done, one criterion met in substance rather than to the letter
+
+**Run on 2026-09-24**, zh-Hans macOS 26.7, System Settings, `--pixels --focus 系统设置`,
+both directions from the person's own Dark appearance and back to it, with the system's
+appearance read from `defaults` after each run rather than taken from the report:
+
+| run | steps | route of the row | route of the option | check | system after |
+|---|---|---|---|---|---|
+| to Light | PRESS 外观, (refused, re-looked), PRESS 浅色, DONE | `click`, 26 ms act | `ax-press`, 9 ms act | confirmed by the declared state | Light |
+| to Dark (example file) | (外观 refused: pane already open, 7 namesakes), PRESS 深色外观, DONE | -- | `ax-press` | confirmed | Dark (after ~2 s) |
+
+Against the revised acceptance below:
+- **The sidebar row is addressable because pixels named it** -- in substance. The name
+  `外观` is attached, by fusion, to the static text inside the row (whose own label is the
+  identifier `com.apple.Appearance-Settings.extension`), not to the `row:outlinerow`
+  itself: the hit test answers with the deepest element at the point. 39 regions were
+  absorbed on that window; 0 rows carry an alias. Pressing that text presses the row.
+- **The setting change is semantic**: `ax-press` on a labelled button, both times.
+- **Coordinate clicks are counted**: one per run, for the row.
+- **3 steps or fewer**: 3 actions, plus one refused step each time (below).
+
+The first real runs found four defects, all fixed with tests before these numbers:
+1. An element found only by fusion's hit test had no live reference, so it was always
+   "stale" and could be named but never pressed.
+2. The settle after the sidebar click ended on the sidebar's new selection while the pane
+   was still loading; the runner now waits again after a refused step, and a script offers
+   a refused step once more when its control has since appeared.
+3. Two buttons are both 深色 (appearance, icon style). A declared check matched the wrong
+   one and confirmed Dark while the appearance was Light -- a false DONE, caught only
+   because `defaults` was read independently. Namesakes that disagree now confirm nothing,
+   and `AXHelp` is kept as a target's `hint`, so 深色外观 names exactly one of them.
+4. The system appearance changes about two seconds after the press; the report is right
+   and a reading of `defaults` taken immediately is not.
 
 Original goal: prove the semantic path on System Settings with pixels disabled.
 **A real machine disproved that goal**, and the measurement is more useful than

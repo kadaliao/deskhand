@@ -152,10 +152,19 @@ class Expectation:
             return False, f"{_state_of(named[0])} is still there"
         if not named:
             return False, f"no target named {self.label!r} in the view"
-        for target in named:
-            if self._holds(target):
-                return True, f"{_state_of(target)} matches {self.describe()}"
+        holding = [t for t in named if self._holds(t)]
         seen = "; ".join(_state_of(t) for t in named[:3])
+        if holding and len(holding) < len(named):
+            # Two controls share the name and disagree: which one the check meant is not
+            # known, so it is not confirmed. Measured: System Settings has a 深色 for the
+            # appearance and a 深色 for the icon style; "any 深色 is selected" confirmed a
+            # Dark appearance while the appearance was Light.
+            return False, (
+                f"{len(named)} targets are named {self.label!r} and they disagree ({seen}); "
+                "use a more specific label, or kind, to say which one"
+            )
+        if holding:
+            return True, f"{_state_of(holding[0])} matches {self.describe()}"
         return False, f"wanted {self.describe()}, found {seen}"
 
 

@@ -161,3 +161,28 @@ class TestAnApplicationBehindOthers:
         sensor, recorder = behind
         sensor.act(_pinned_view(_target("t1", "button")), Action(verb=Verb.PRESS, target="t1"))
         assert recorder.pressed == [{"click_fallback": True}]
+
+
+class HitAX:
+    def AXUIElementCreateSystemWide(self) -> str:
+        return "system"
+
+    def AXUIElementCopyElementAtPosition(
+        self, where: object, x: float, y: float, out: object
+    ) -> tuple[int, str]:
+        return 0, "row-text-element"
+
+
+def test_an_element_found_by_pointing_can_be_acted_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1's first real run: the sidebar label sat on an element the walk never reached, so
+    the freshness check found no live reference and called it stale every time."""
+    monkeypatch.setattr(axmod, "ax", HitAX)
+    found = axmod.AXSource()
+    monkeypatch.setattr(found, "_timeout", lambda ref: None)
+    monkeypatch.setattr(found, "_details", lambda ref: {"AXRole": "AXStaticText"})
+    monkeypatch.setattr(
+        found, "_target", lambda ref, role, details: _target("ax:hit", "statictext")
+    )
+    target = found.hit(10, 10)
+    assert target is not None
+    assert found.ref("ax:hit") == "row-text-element"

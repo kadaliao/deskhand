@@ -551,6 +551,7 @@ class AXSource:
             selected=selected,
             expanded=None if details.get("AXExpanded") is None else bool(details.get("AXExpanded")),
             note=note,
+            hint=_hint(details, label),
         )
 
     # ------------------------------------------------------------- hit test
@@ -579,7 +580,16 @@ class AXSource:
         role = details.get("AXRole")
         if role is None:
             return None
-        return self._target(element, str(role), details)
+        found = self._target(element, str(role), details)
+        if found is not None:
+            # An element fusion found by pointing at recognised text may be one the walk
+            # never reached (below its depth, or skipped). Without its reference it could
+            # be named but never acted on: the freshness check found no live element and
+            # called it stale every time. Measured on M1's first real run -- the sidebar
+            # row's label ("外观") sat on exactly such an element, and the step failed with
+            # StaleTarget before anything was pressed.
+            self._refs.setdefault(found.id, element)
+        return found
 
     # ------------------------------------------------------------ act (native)
 
@@ -706,6 +716,19 @@ def _label(details: dict[str, Any]) -> tuple[str, str]:
         if text:
             return text[:MAX_LABEL_CHARS], "from-identifier"
     return "", ""
+
+
+def _hint(details: dict[str, Any], label: str) -> str:
+    """``AXHelp``, when it is not already the label: what the control is *for*.
+
+    Measured on a zh-Hans System Settings: two buttons are both called 深色, one for the
+    appearance and one for the icon style, and nothing else a walk reads tells them apart.
+    Only the appearance one has help text ("为按钮、菜单和窗口使用深色外观。"), so a task can
+    say 深色外观 and mean exactly one of them.
+    """
+    raw = details.get("AXHelp")
+    text = " ".join(str(raw).split())[:MAX_LABEL_CHARS] if raw else ""
+    return "" if text == label else text
 
 
 def _coerce(value: Any) -> str | int | float | bool | None:

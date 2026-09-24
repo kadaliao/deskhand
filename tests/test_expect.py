@@ -138,3 +138,44 @@ def test_a_task_file_with_a_bad_expectation_fails_before_anything_is_touched(
     )
     assert main(["run", "--task", str(path)]) != 0
     assert "does not have" in capsys.readouterr().err
+
+
+class TestNamesakes:
+    """System Settings has a 深色 for the appearance and a 深色 for the icon style."""
+
+    def test_namesakes_that_disagree_confirm_nothing(self) -> None:
+        appearance = radio("a", "深色", selected=False)
+        icons = radio("i", "深色", selected=True)
+        ok, how = Expectation(label="深色", selected=True).judge(view(appearance, icons))
+        assert not ok
+        assert "disagree" in how
+
+    def test_namesakes_that_agree_confirm(self) -> None:
+        ok, _ = Expectation(label="深色", selected=True).judge(
+            view(radio("a", "深色", selected=True), radio("i", "深色", selected=True))
+        )
+        assert ok
+
+    def test_help_text_tells_them_apart(self) -> None:
+        from dataclasses import replace
+
+        appearance = replace(
+            radio("a", "深色", selected=True), hint="为按钮、菜单和窗口使用深色外观。"
+        )
+        icons = radio("i", "深色", selected=False)
+        ok, how = Expectation(label="深色外观", selected=True).judge(view(appearance, icons))
+        assert ok and "(a)" in how
+
+    def test_a_step_can_use_help_text_to_choose_between_namesakes(self) -> None:
+        from dataclasses import replace
+
+        from deskhand.validate import resolve_target
+
+        appearance = replace(
+            radio("a", "深色", selected=False), hint="为按钮、菜单和窗口使用深色外观。"
+        )
+        icons = radio("i", "深色", selected=True)
+        chosen = resolve_target(
+            Choice(verb=Verb.PRESS, target_label="深色外观"), view(appearance, icons), role="target"
+        )
+        assert chosen is appearance
