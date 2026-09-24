@@ -112,6 +112,7 @@ class MacSensor:
                 "semantic": len(semantic),
                 "pixels": len(visual),
                 "pixels_used": used_pixels,
+                "pixels_read": getattr(self.ocr, "last_read", None) if used_pixels else None,
                 "fusion": fused.notes,
                 "click_only": sum(1 for t in targets if "click-only" in t.note),
             },

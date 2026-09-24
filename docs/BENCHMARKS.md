@@ -316,6 +316,35 @@ was reverted rather than shipped with a threshold that would hide this. A predic
 have to come from somewhere other than the walked tree -- the previous frame's
 recognition, for example -- and that has not been tried.
 
+## Reading only what changed
+
+What did work, measured the same day: compare the capture with the previous one, tile by
+tile, and recognise only the rectangle that changed; readings elsewhere are kept, because
+the same pixels read the same. The comparison is 32 px tiles hashed with blake2b.
+
+| window, two seconds apart | tiles changed | comparison | full recognition |
+|---|---|---|---|
+| Finder, at rest | 0 / 3402 | 32 ms | 1277 ms |
+| Google Chrome, at rest | 0 / 7920 | 66 ms | 856 ms |
+| Ghostty, streaming output | 2927 / 6912 (a box 57% of the window) | 58 ms | 1149 ms |
+
+End to end, `MacSensor` pinned to the window, `pixels=True`, three observations in a row:
+
+| | 1st | 2nd | 3rd | a fresh full read after |
+|---|---|---|---|---|
+| Finder | 2795 ms full | 271 ms reused | 221 ms reused | 1594 ms, identical targets and names |
+| Ghostty | 1413 ms full | 491 ms, 21% re-read | 466 ms, 20% | 1023 ms |
+
+On one pair of Ghostty images, a crop of 3% took 220 ms against 912-928 ms for reading the
+same second image whole; 40 of 41 texts matched. The differences were Vision spelling the
+same unchanged pixels differently on two passes (`tiaoxingyi` / `liaoxingyi`), not text
+missed -- and keeping a reading while its pixels stay put also keeps a pixel target's id,
+which is derived from its words, steady from one frame to the next.
+
+A change larger than half the window, another window, a move or a resize reads everything.
+The notes of a fused view say which happened: `pixels_read` is `full`, `reused` or
+`partial NN%`.
+
 ## Not measured
 - Whether the pixel-derived names are *useful*. The 15 regions absorbed on System
   Settings included heavy garbling (`'Liquffj Glas5'`, `'o*&*'`) and **none of them named

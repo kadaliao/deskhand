@@ -403,6 +403,12 @@ Still open in M3, in the order the measurements now justify them:
    taken from the walk's unnamed controls read *nothing* useful on Chrome: every element the
    pixels named there was found by hit testing, not by the walk. What is left open is a
    region from somewhere else -- the previous frame's recognised text is the candidate.
+
+   **Done the other way round, 2026-09-24**: not "where is text likely" but "which pixels
+   changed". A tile comparison against the previous capture (32-66 ms) decides between
+   reusing every reading, re-reading a crop, or reading the whole window. Finder at rest:
+   1594 ms -> 221-271 ms per fused observation, identical targets. BENCHMARKS, "Reading
+   only what changed".
 2. **Notification-driven waiting** (`AXObserver`). Much less valuable than it
    looked: polling a warm tree costs 5 ms, so event-driven settling would save
    single-digit milliseconds on a quiet interface. It is now justified by the

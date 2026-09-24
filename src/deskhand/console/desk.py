@@ -59,6 +59,11 @@ def model_status() -> dict[str, Any]:
 class MacDesk:
     kind = "mac"
 
+    def __init__(self) -> None:
+        # One sensor per application and pixel mode, kept: a sensor remembers its last
+        # recognition, so looking again at a window that has not changed reads nothing.
+        self._sensors: dict[tuple[str, str], Sensor] = {}
+
     def doctor(self) -> dict[str, Any]:
         from ..sensors.macos.screen import permissions
 
@@ -93,7 +98,11 @@ class MacDesk:
     def sensor(self, app: str | None, pixels: str) -> Sensor:
         from ..sensors.macos.screen import open_sensor
 
-        return open_sensor(pixels=PIXEL_MODES.get(pixels, "auto"), app=app or None)  # type: ignore[arg-type]
+        key = (app or "", pixels)
+        if key not in self._sensors:
+            mode = PIXEL_MODES.get(pixels, "auto")
+            self._sensors[key] = open_sensor(pixels=mode, app=app or None)  # type: ignore[arg-type]
+        return self._sensors[key]
 
     def shot(self, app: str | None, window: str = "", box: Box | None = None) -> Shot | None:
         from ..sensors.macos.apps import find, frontmost

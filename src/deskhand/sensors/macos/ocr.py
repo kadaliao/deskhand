@@ -13,11 +13,23 @@ import logging
 import math
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from ...errors import CannotDo, NoPermission
 from ...types import Box, Target, Verb
-from .pixels import Reading, as_target, best_per_region, dedupe_targets, to_box
+from .pixels import (
+    Reading,
+    as_target,
+    best_per_region,
+    changed_rect,
+    dedupe_targets,
+    grow_to_cover,
+    outside,
+    reframe,
+    tile_digests,
+    to_box,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +50,17 @@ def screen_capture_allowed() -> bool:
         return bool(preflight())
     except Exception:  # pragma: no cover - defensive
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class _Memory:
+    """The last recognition, and the pixels it was made from."""
+
+    window_id: int
+    window: Box
+    size: tuple[int, int]
+    digests: list[bytes]
+    readings: list[Reading]
 
 
 class OCRSource:
@@ -70,6 +93,7 @@ class OCRSource:
         min_text_height: float = 0.006,
         max_targets: int = 160,
         languages: Sequence[str] | None = None,
+        partial_max_share: float = 0.5,
     ) -> None:
         if level not in {"fast", "accurate"}:
             raise ValueError("level must be 'fast' or 'accurate'")
@@ -83,6 +107,11 @@ class OCRSource:
         # decide", which is what an ablation would want.
         self.languages: tuple[str, ...] | None = None if languages is None else tuple(languages)
         self.last_window: Box | None = None
+        self.partial_max_share = partial_max_share
+        """Above this share of the window changed, read all of it: a crop saves too little."""
+        self.last_read = "none"
+        """How the last recognition was made: ``full``, ``reused``, or ``partial NN%``."""
+        self._memory: _Memory | None = None
 
     def _recognise(self) -> list[str]:
         """The languages to hand Vision, in its own vocabulary."""
@@ -113,12 +142,58 @@ class OCRSource:
         if width <= 0 or height <= 0:
             return ()
         self.last_window = window
-        readings = _read(image, width, height, self)
+        readings = self._read_changed(window_id, window, image, int(width), int(height))
         kept = best_per_region(readings, window, image_w=width, image_h=height)[: self.max_targets]
         targets = tuple(
             as_target(reading, to_box(reading, window, width, height)) for reading in kept
         )
         return dedupe_targets(targets)
+
+    def _read_changed(
+        self, window_id: int, window: Box, image: Any, width: int, height: int
+    ) -> list[Reading]:
+        """Recognise only the part of the window whose pixels changed since last time.
+
+        Unchanged pixels read the same, so their readings are kept. Measured on real
+        windows two seconds apart: Finder and Chrome at rest changed in 0 of 3402 and 0
+        of 7920 tiles (the tile comparison cost 32-66 ms, the recognition it replaced
+        856-1277 ms); a terminal streaming output changed in a box 57% of its window.
+        Anything else about the window changing -- another window, a move, a resize --
+        means reading all of it.
+        """
+        digests = _digests(image, width, height)
+        last = self._memory
+        readings: list[Reading] | None = None
+        self.last_read = "full"
+        if (
+            digests is not None
+            and last is not None
+            and last.window_id == window_id
+            and last.window == window
+            and last.size == (width, height)
+        ):
+            rect = changed_rect(last.digests, digests, width, height)
+            if rect is None:
+                readings = list(last.readings)
+                self.last_read = "reused"
+            else:
+                grown = grow_to_cover(rect, last.readings, width, height)
+                share = grown[2] * grown[3] / (width * height)
+                if share <= self.partial_max_share:
+                    part = _crop_image(image, grown)
+                    fresh = _read(part, grown[2], grown[3], self, scale=height / grown[3])
+                    readings = outside(last.readings, grown, width, height) + [
+                        reframe(reading, grown, width, height) for reading in fresh
+                    ]
+                    self.last_read = f"partial {share:.0%}"
+        if readings is None:
+            readings = _read(image, width, height, self)
+        self._memory = (
+            None
+            if digests is None
+            else _Memory(window_id, window, (width, height), digests, readings)
+        )
+        return readings
 
 
 # --------------------------------------------------------------------------- #
@@ -267,6 +342,26 @@ def snapshot(
     return bytes(data), box
 
 
+def _digests(image: Any, width: int, height: int) -> list[bytes] | None:
+    """Tile digests of a capture, or ``None`` when its pixel layout is not the usual one."""
+    quartz = _quartz()
+    if quartz.CGImageGetBitsPerPixel(image) != 32:  # noqa: PLR2004 - four bytes per pixel
+        return None
+    provider = quartz.CGImageGetDataProvider(image)
+    data = quartz.CGDataProviderCopyData(provider)
+    if data is None:
+        return None
+    return tile_digests(bytes(data), width, height, quartz.CGImageGetBytesPerRow(image))
+
+
+def _crop_image(image: Any, rect: tuple[int, ...]) -> Any:
+    quartz = _quartz()
+    part = quartz.CGImageCreateWithImageInRect(image, quartz.CGRectMake(*rect))
+    if part is None:
+        raise CannotDo("could not crop the window image")
+    return part
+
+
 # --------------------------------------------------------------------------- #
 # recognition
 # --------------------------------------------------------------------------- #
@@ -285,7 +380,15 @@ def preferred_languages() -> list[str]:
         return []
 
 
-def _read(image: Any, width: float, height: float, source: OCRSource) -> list[Reading]:
+def _read(
+    image: Any, width: float, height: float, source: OCRSource, *, scale: float = 1.0
+) -> list[Reading]:
+    """Recognise text in ``image``.
+
+    ``scale`` is how many times taller the whole window is than this image: the minimum
+    text height is a fraction of the image, and a crop must not read text smaller than
+    the whole window would have.
+    """
     del width, height
     try:
         import objc
@@ -313,7 +416,7 @@ def _read(image: Any, width: float, height: float, source: OCRSource) -> list[Re
             # Every float() in this function is converting a CGFloat that pyobjc hands back
             # as a number, not parsing text, so none of them can raise ValueError.
             # ast-grep-ignore
-            request.setMinimumTextHeight_(float(source.min_text_height))
+            request.setMinimumTextHeight_(min(1.0, float(source.min_text_height) * scale))
         handler = vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, None)
         ok = handler.performRequests_error_([request], None)
         if isinstance(ok, tuple):
