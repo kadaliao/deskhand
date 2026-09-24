@@ -273,10 +273,50 @@ and a Chromium page -- get the pixels they need, and a fully-named window still 
 for them. The Chromium number is worth keeping: **75% of that window's targets had no name
 at all**, which is the M2 thesis in one measurement.
 
-## Not measured
+## Region-scoped recognition: the saving is real, the predictor is not
 
-- Region-scoped recognition: the current pass recognises the whole window image, so the
-  912 ms above is the cost of a full-window Vision pass and not a floor.
+Two questions, measured separately on 2026-09-24, read-only (no focus taken; the trees
+were walked by pid and the windows captured where they sat).
+
+**Does recognition get cheaper with a smaller region?** Yes, roughly with the pixels read
+plus a fixed part. One 1200x800 window (2400x1600 capture), accurate level, the machine's
+languages, median of five after a warm-up:
+
+| region of the image | ms | regions recognised |
+|---|---|---|
+| all of it | 547 | 52 |
+| left 30% | 165 | 17 |
+| left half | 429 | 40 |
+| one quarter | 281 | 28 |
+| a 10% strip | 142 | 9 |
+
+**Can the walk say where to read?** No, and this is what stopped the change. The idea was
+to read only around the operable controls accessibility leaves unnamed. Where those sit:
+
+| window | targets | unnamed, small, operable | their union |
+|---|---|---|---|
+| Google Chrome | 141 | 58 | 28% of the window |
+| Finder | 496 | 408 | 97% |
+| Logseq | 25 | 3 | 98% |
+| Ghostty, Claude | 10-31 | 2 (title-bar buttons) | ~0% |
+
+Counting every unnamed target instead put the union at 100% for all five: unnamed web
+areas and groups span the window. Then the A/B on the Chrome window, `pixels="auto"`:
+
+| | fused observation | recognised | walked elements given a name by pixels |
+|---|---|---|---|
+| whole window | 596-639 ms | 56 | 35-40 |
+| region from the walk | 45 ms | 0 | **0** |
+
+All 40 elements the pixels named were **not in the walk at all**: fusion found them by hit
+testing the recognised text (`AXUIElementCopyElementAtPosition`), below where the walk
+stopped. So the walk cannot predict where the text that matters is, and a region derived
+from it silently deletes exactly the names the overlay exists to add. The implementation
+was reverted rather than shipped with a threshold that would hide this. A predictor would
+have to come from somewhere other than the walked tree -- the previous frame's
+recognition, for example -- and that has not been tried.
+
+## Not measured
 - Whether the pixel-derived names are *useful*. The 15 regions absorbed on System
   Settings included heavy garbling (`'Liquffj Glas5'`, `'o*&*'`) and **none of them named
 a sidebar row**, which is the specific thing M1's revised acceptance asks for. The

@@ -397,6 +397,12 @@ Still open in M3, in the order the measurements now justify them:
    `CGWindowListCreateImage` is deprecated but still present on this macOS, so
    `ScreenCaptureKit` removes a future cliff. Region-scoped recognition removes a present
    cost, and it is the one worth doing first.
+
+   **Tried 2026-09-24, and the obvious version is wrong** (BENCHMARKS, "Region-scoped
+   recognition"). A smaller region is cheaper (547 ms whole, 165 ms for 30%), but a region
+   taken from the walk's unnamed controls read *nothing* useful on Chrome: every element the
+   pixels named there was found by hit testing, not by the walk. What is left open is a
+   region from somewhere else -- the previous frame's recognised text is the candidate.
 2. **Notification-driven waiting** (`AXObserver`). Much less valuable than it
    looked: polling a warm tree costs 5 ms, so event-driven settling would save
    single-digit milliseconds on a quiet interface. It is now justified by the
