@@ -146,6 +146,9 @@ class Expectation:
 
     def judge(self, view: View) -> tuple[bool, str]:
         named = [t for t in view.targets if self._named(t)]
+        # A word read off the screen has no state to check; when accessibility has a control
+        # by the same name, that control is what the check is about.
+        named = [t for t in named if not t.visual] or named
         if self.absent:
             if not named:
                 return True, f"no target named {self.label!r} in the view"

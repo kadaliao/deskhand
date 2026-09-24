@@ -309,7 +309,28 @@ Also from this run: `--focus` needed a retry, because Chrome (rather than the
 user) stole focus back on the first attempt. The verification script checks the
 frontmost application before acting and aborts when it is not the intended one.
 
-## M2 — Electron, where accessibility has to be asked · written, premise resolved, acceptance not run
+## M2 — Electron, where accessibility has to be asked · run on a CEF app; the semantic criteria cannot be met there
+
+**Run on 2026-09-24** on NeteaseMusic 3.1.12 (Chromium Embedded Framework; Spotify is not
+installed on this machine), `--pixels --focus`, with the person's consent to sound:
+
+- **The nudge does nothing here.** The app advertises `AXEnhancedUserInterface` only;
+  setting `AXManualAccessibility` anyway answers -25205 (attribute unsupported), and the
+  walk is 1 element before and 1 element 0.5, 1.5 and 3 s after. There is no search
+  field, no button, no list in accessibility -- so "the search field is a `text_field`
+  offering `TYPE`" and "every button through `ax-press`" are not reachable on this app.
+- **It found a fusion bug that made the app unusable.** Every recognised word hit-tested
+  to the one not-aimable scroll area under the page, and was folded into it: 47 names on
+  one element, 0 targets left to press. Words over a container, or over anything that
+  takes no verb, now stay pixel targets (`fusion.over_container`: 43 on that window), and
+  where a pixel word shares a name with an accessibility control, the control wins.
+- **The pixel path works, and every coordinate action is counted.** Open 我喜欢的音乐
+  (`click`), then `OPEN` 放弃幻想 准备战斗 (`double-click`, 2090 ms): the now-playing bar
+  then read `放弃幻想 准备战斗 / 舒光浩`. Paused with `KEY SPACE` (`key`), confirmed by the
+  app's native menu bar, which says 播放 once paused. Two coordinate actions, both counted.
+- **What deskhand cannot do on such an app**: type. `TYPE` needs a text target, and a
+  pixel target does not offer it, so search is out of reach without a model-free way to
+  type into "whatever has focus" -- which this project refuses on purpose.
 
 **Read the Chromium finding in `docs/BENCHMARKS.md` first.** Five consecutive
 observations of one Chrome window returned 158, 520, 158, 519 and 158 elements, taken

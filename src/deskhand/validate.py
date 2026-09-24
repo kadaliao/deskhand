@@ -84,6 +84,10 @@ def resolve_target(choice: Choice, view: View, *, role: str) -> Target | None:
         # the sidebar row that the task meant carried ``外观`` only as an alias, so
         # "exact beats alias" alone chose the window and made the step a blind click.
         operable = _prefer_controls(matched)
+        # Accessibility before pixels: a word read off the screen next to a control that
+        # carries the same name is a caption, not a second control. Pixel targets remain
+        # the answer only when nothing semantic matched.
+        operable = [t for t in operable if not t.visual] or operable
         # Among equals, a real label still beats an alias.
         exact = [target for target in operable if norm_text(target.label) == wanted]
         candidates = exact or operable

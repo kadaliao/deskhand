@@ -146,3 +146,45 @@ class TestFusion:
         both = (semantic("a", "Play", box=Box(0, 0, 100, 20), actions=frozenset({Verb.PRESS})),)
         low = fuse([(10, both), (0, both)])
         assert len(low.targets) == 1
+
+
+class TestContainers:
+    """NeteaseMusic (CEF): one not-aimable scroll area under every word of the page."""
+
+    def area(self) -> Target:
+        return Target(
+            id="ax:area",
+            kind="scrollarea",
+            box=Box(0, 0, 1000, 800),
+            actions=frozenset(),
+            source="ax",
+        )
+
+    def test_words_over_a_container_stay_pressable_pixel_targets(self) -> None:
+        area = self.area()
+        words = [
+            pixels("推荐", box=Box(10, 10, 40, 20)),
+            pixels("我喜欢的音乐", box=Box(10, 60, 90, 20)),
+        ]
+        hit = Hit({(30.0, 20.0): area, (55.0, 70.0): area})
+        fused = fuse([(0, (area,)), (10, tuple(words))], hit=hit)
+        assert sorted(t.label for t in fused.targets if t.visual) == ["我喜欢的音乐", "推荐"]
+        assert next(t for t in fused.targets if t.id == "ax:area").labels == ()
+        assert fused.notes["over_container"] == 2
+
+    def test_a_word_over_a_control_still_becomes_its_name(self) -> None:
+        button = semantic("ax:b", "", box=Box(0, 0, 60, 30))
+        word = pixels("播放", box=Box(5, 5, 40, 20))
+        fused = fuse([(0, (button,)), (10, (word,))], hit=Hit({(25.0, 15.0): button}))
+        assert [t.spoken() for t in fused.targets] == ["播放"]
+
+
+def test_a_caption_does_not_make_its_control_ambiguous() -> None:
+    from deskhand.types import Choice, View
+    from deskhand.validate import resolve_target
+
+    button = semantic("ax:light", "浅色", box=Box(0, 0, 60, 40))
+    caption = pixels("浅色", box=Box(5, 45, 40, 20))
+    view = View(app="a", window="w", revision="r", targets=(button, caption))
+    chosen = resolve_target(Choice(verb=Verb.PRESS, target_label="浅色"), view, role="target")
+    assert chosen is button

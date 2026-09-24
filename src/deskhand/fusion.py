@@ -17,7 +17,8 @@ from typing import Any
 
 from .fingerprint import norm_text
 from .protocols import HitTester
-from .types import Box, Target
+from .types import ON_A_TARGET, Box, Target
+from .validate import is_container
 
 DEFAULT_OVERLAP = 0.55
 """IoU above which two readings are the same thing."""
@@ -150,6 +151,15 @@ def _place_visual(
         kept.append(candidate)
         return
 
+    if not _operable(resolved):
+        # A pane, a scroll area or a window is under every word in it. Folding the words
+        # into it would leave one element with every name and nothing to aim at: measured
+        # on NeteaseMusic (Chromium Embedded Framework), one not-aimable scroll area took
+        # 47 names -- 推荐, 我喜欢的音乐, 每日推荐 -- and the view had no target left to press.
+        kept.append(candidate)
+        notes["over_container"] = notes.get("over_container", 0) + 1
+        return
+
     known = next((k for k in kept if k.id == resolved.id), None)
     if known is not None:
         kept[kept.index(known)] = _merge_labels(known, candidate)
@@ -174,3 +184,9 @@ def box_of(targets: Iterable[Target]) -> Box | None:
     right = max(b.x + b.w for b in boxes)
     bottom = max(b.y + b.h for b in boxes)
     return Box(left, top, right - left, bottom - top)
+
+
+def _operable(target: Target) -> bool:
+    """Something a pixel region can stand for: it takes a verb aimed at it, and it is not a
+    container of other things."""
+    return bool(target.actions & ON_A_TARGET) and not is_container(target)
